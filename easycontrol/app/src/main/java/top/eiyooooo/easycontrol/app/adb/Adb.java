@@ -20,6 +20,10 @@ import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.L;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
+/**
+ * 类 Adb
+ * 说明：该类负责 Adb 相关功能。
+ */
 
 public class Adb {
   public static final HashMap<String, Adb> adbMap = new HashMap<>();

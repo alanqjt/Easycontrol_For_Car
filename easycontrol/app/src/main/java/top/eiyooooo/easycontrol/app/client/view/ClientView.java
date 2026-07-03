@@ -24,6 +24,10 @@ import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+/**
+ * 类 ClientView
+ * 说明：该类负责 ClientView 相关功能。
+ */
 
 public class ClientView implements TextureView.SurfaceTextureListener {
   public final Device device;

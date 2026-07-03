@@ -7,6 +7,10 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+/**
+ * 类 MyViewForSmallView
+ * 说明：该类负责 MyViewForSmallView 相关功能。
+ */
 
 public class MyViewForSmallView extends FrameLayout {
 

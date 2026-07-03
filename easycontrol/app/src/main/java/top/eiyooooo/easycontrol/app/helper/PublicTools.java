@@ -46,6 +46,10 @@ import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.databinding.*;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
+/**
+ * 类 PublicTools
+ * 说明：该类负责 PublicTools 相关功能。
+ */
 
 public class PublicTools {
 

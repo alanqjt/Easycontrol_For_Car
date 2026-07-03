@@ -9,6 +9,10 @@ import java.util.Objects;
 import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.MonitorEvent;
+/**
+ * 类 EventMonitor
+ * 说明：该类负责 EventMonitor 相关功能。
+ */
 
 public class EventMonitor {
     public static ArrayList<MonitorEvent> monitorEventsList = new ArrayList<>();

@@ -3,6 +3,10 @@ package top.eiyooooo.easycontrol.app.buffer;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingDeque;
+/**
+ * 类 Buffer
+ * 说明：该类负责 Buffer 相关功能。
+ */
 
 public class Buffer {
   private boolean isClosed = false;

@@ -15,6 +15,10 @@ import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 
 import javax.crypto.Cipher;
+/**
+ * 类 AdbKeyPair
+ * 说明：该类负责 AdbKeyPair 相关功能。
+ */
 
 public class AdbKeyPair {
 

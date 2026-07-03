@@ -7,6 +7,10 @@ import top.eiyooooo.easycontrol.server.utils.L;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+/**
+ * 类 ServiceManager
+ * 说明：该类负责 ServiceManager 相关功能。
+ */
 
 public class ServiceManager {
     private static Method GET_SERVICE_METHOD;

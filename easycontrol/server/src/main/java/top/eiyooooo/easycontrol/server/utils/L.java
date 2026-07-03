@@ -11,6 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+/**
+ * 类 L
+ * 说明：该类负责 L 相关功能。
+ */
 
 public class L {
 

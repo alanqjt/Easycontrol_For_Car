@@ -1,6 +1,10 @@
 package top.eiyooooo.easycontrol.app.entity;
 
 import android.content.SharedPreferences;
+/**
+ * 类 Setting
+ * 说明：该类负责 Setting 相关功能。
+ */
 
 public final class Setting {
   private final SharedPreferences sharedPreferences;

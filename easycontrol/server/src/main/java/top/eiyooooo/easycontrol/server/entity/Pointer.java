@@ -1,4 +1,8 @@
 package top.eiyooooo.easycontrol.server.entity;
+/**
+ * 类 Pointer
+ * 说明：该类负责 Pointer 相关功能。
+ */
 
 public final class Pointer {
 

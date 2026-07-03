@@ -6,6 +6,10 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+/**
+ * 类 TcpChannel
+ * 说明：该类负责 TcpChannel 相关功能。
+ */
 
 public class TcpChannel implements AdbChannel {
   private final Socket socket = new Socket();

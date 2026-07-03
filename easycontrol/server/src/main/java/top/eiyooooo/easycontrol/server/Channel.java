@@ -41,6 +41,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+/**
+ * 类 Channel
+ * 说明：该类负责 Channel 相关功能。
+ */
 
 public class Channel {
     DisplayMetrics displayMetrics;

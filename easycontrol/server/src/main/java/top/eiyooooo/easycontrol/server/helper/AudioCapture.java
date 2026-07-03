@@ -13,6 +13,10 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+/**
+ * 类 AudioCapture
+ * 说明：该类负责 AudioCapture 相关功能。
+ */
 
 public final class AudioCapture {
 

@@ -22,6 +22,10 @@ import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Date;
 import java.util.Random;
+/**
+ * 类 AdbPairManager
+ * 说明：该类负责 AdbPairManager 相关功能。
+ */
 
 public class AdbPairManager extends AbsAdbConnectionManager {
     public static AbsAdbConnectionManager INSTANCE;

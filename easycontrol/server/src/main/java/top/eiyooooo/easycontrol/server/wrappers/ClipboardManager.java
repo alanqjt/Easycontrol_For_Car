@@ -8,6 +8,10 @@ import top.eiyooooo.easycontrol.server.helper.FakeContext;
 import top.eiyooooo.easycontrol.server.utils.L;
 
 import java.lang.reflect.Method;
+/**
+ * 类 ClipboardManager
+ * 说明：该类负责 ClipboardManager 相关功能。
+ */
 
 public class ClipboardManager {
     private static IInterface manager;

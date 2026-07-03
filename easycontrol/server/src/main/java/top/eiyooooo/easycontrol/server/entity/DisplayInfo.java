@@ -1,6 +1,10 @@
 package top.eiyooooo.easycontrol.server.entity;
 
 import android.util.Pair;
+/**
+ * 类 DisplayInfo
+ * 说明：该类负责 DisplayInfo 相关功能。
+ */
 
 public final class DisplayInfo {
     public final int displayId;

@@ -7,6 +7,10 @@ import android.content.MutableContextWrapper;
 import android.os.Build;
 import android.os.Process;
 import top.eiyooooo.easycontrol.server.utils.Workarounds;
+/**
+ * 类 FakeContext
+ * 说明：该类负责 FakeContext 相关功能。
+ */
 
 public final class FakeContext extends MutableContextWrapper {
 

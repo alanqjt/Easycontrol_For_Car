@@ -9,6 +9,10 @@ import android.content.pm.ShortcutManager;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Icon;
 import android.os.Build;
+/**
+ * 类 ShortcutHelper
+ * 说明：该类负责 ShortcutHelper 相关功能。
+ */
 
 public class ShortcutHelper {
     public static void addShortcut(Context context, Class<?> targetActivity, String label, int iconResourceId, String uuid) {

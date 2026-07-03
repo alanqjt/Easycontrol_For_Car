@@ -22,6 +22,10 @@ import top.eiyooooo.easycontrol.app.databinding.ItemReconnectBinding;
 import top.eiyooooo.easycontrol.app.databinding.ModuleDialogBinding;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
+/**
+ * 类 ConnectHelper
+ * 说明：该类负责 ConnectHelper 相关功能。
+ */
 
 public class ConnectHelper {
     public static boolean status;

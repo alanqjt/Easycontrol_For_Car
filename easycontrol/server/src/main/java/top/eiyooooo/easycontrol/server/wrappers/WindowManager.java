@@ -8,6 +8,10 @@ import top.eiyooooo.easycontrol.server.utils.L;
 
 import java.lang.reflect.Method;
 import java.util.Objects;
+/**
+ * 类 WindowManager
+ * 说明：该类负责 WindowManager 相关功能。
+ */
 
 public final class WindowManager {
     private static IInterface manager;

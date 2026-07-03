@@ -1,4 +1,8 @@
 package top.eiyooooo.easycontrol.app.entity;
+/**
+ * 类 MonitorEvent
+ * 说明：该类负责 MonitorEvent 相关功能。
+ */
 
 public class MonitorEvent {
   public final String uuid;

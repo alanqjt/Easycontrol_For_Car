@@ -7,6 +7,10 @@ import top.eiyooooo.easycontrol.server.entity.Device;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+/**
+ * 类 ControlPacket
+ * 说明：该类负责 ControlPacket 相关功能。
+ */
 
 public final class ControlPacket {
 

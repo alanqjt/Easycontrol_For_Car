@@ -12,6 +12,10 @@ import androidx.annotation.Nullable;
 import org.lsposed.hiddenapibypass.HiddenApiBypass;
 import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.entity.AppData;
+/**
+ * 类 MyApplication
+ * 说明：该类负责 MyApplication 相关功能。
+ */
 
 public class MyApplication extends Application implements Application.ActivityLifecycleCallbacks {
     private Thread releaseThread;

@@ -16,6 +16,10 @@ import top.eiyooooo.easycontrol.app.entity.AppData;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
+/**
+ * 类 AudioDecode
+ * 说明：该类负责 AudioDecode 相关功能。
+ */
 
 public class AudioDecode {
   public MediaCodec decodec;

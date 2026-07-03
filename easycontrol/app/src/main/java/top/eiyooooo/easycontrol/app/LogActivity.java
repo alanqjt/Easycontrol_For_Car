@@ -10,6 +10,10 @@ import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.DeviceListAdapter;
 import top.eiyooooo.easycontrol.app.helper.L;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
+/**
+ * 类 LogActivity
+ * 说明：该类负责 LogActivity 相关功能。
+ */
 
 public class LogActivity extends Activity {
   private ActivityLogBinding logActivity;

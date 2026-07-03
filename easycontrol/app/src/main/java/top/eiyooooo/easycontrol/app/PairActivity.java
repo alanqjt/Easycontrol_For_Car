@@ -17,6 +17,10 @@ import top.eiyooooo.easycontrol.app.adb.AdbPairManager;
 import top.eiyooooo.easycontrol.app.databinding.ActivityPairBinding;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
+/**
+ * 类 PairActivity
+ * 说明：该类负责 PairActivity 相关功能。
+ */
 
 public class PairActivity extends Activity {
     private ActivityPairBinding pairActivity;

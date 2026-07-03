@@ -9,6 +9,10 @@ import top.eiyooooo.easycontrol.server.utils.L;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Objects;
+/**
+ * 类 IPackageManager
+ * 说明：该类负责 IPackageManager 相关功能。
+ */
 
 public class IPackageManager {
     private static IInterface manager;

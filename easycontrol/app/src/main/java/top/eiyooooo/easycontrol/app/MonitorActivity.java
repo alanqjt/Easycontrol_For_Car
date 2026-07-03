@@ -24,6 +24,10 @@ import top.eiyooooo.easycontrol.app.helper.PublicTools;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.UUID;
+/**
+ * 类 MonitorActivity
+ * 说明：该类负责 MonitorActivity 相关功能。
+ */
 
 public class MonitorActivity extends Activity {
   /**

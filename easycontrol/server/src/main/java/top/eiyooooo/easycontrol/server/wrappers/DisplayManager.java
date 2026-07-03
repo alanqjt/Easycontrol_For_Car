@@ -13,6 +13,10 @@ import java.lang.reflect.Method;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+/**
+ * 类 DisplayManager
+ * 说明：该类负责 DisplayManager 相关功能。
+ */
 
 public final class DisplayManager {
     private static Object manager;

@@ -7,6 +7,10 @@ import top.eiyooooo.easycontrol.app.entity.Device;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+/**
+ * 类 L
+ * 说明：该类负责 L 相关功能。
+ */
 
 public class L {
     private static final Map<String, StringBuilder> logs = new HashMap<>();

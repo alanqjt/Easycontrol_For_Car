@@ -13,6 +13,10 @@ import java.io.InputStream;
 
 import top.eiyooooo.easycontrol.app.databinding.ActivityWebViewBinding;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
+/**
+ * 类 WebViewActivity
+ * 说明：该类负责 WebViewActivity 相关功能。
+ */
 
 public class WebViewActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")

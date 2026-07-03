@@ -4,6 +4,10 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+/**
+ * 类 AdbProtocol
+ * 说明：该类负责 AdbProtocol 相关功能。
+ */
 
 public class AdbProtocol {
   public static final int ADB_HEADER_LENGTH = 24;

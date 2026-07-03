@@ -8,6 +8,10 @@ import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.DeviceListAdapter;
+/**
+ * 类 StartDeviceActivity
+ * 说明：该类负责 StartDeviceActivity 相关功能。
+ */
 
 public class StartDeviceActivity extends Activity {
     @Override

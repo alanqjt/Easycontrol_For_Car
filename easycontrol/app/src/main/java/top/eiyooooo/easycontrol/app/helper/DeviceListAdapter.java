@@ -30,6 +30,10 @@ import top.eiyooooo.easycontrol.app.R;
 import top.eiyooooo.easycontrol.app.databinding.ItemDevicesItemBinding;
 import top.eiyooooo.easycontrol.app.databinding.ItemDevicesItemDetailBinding;
 import top.eiyooooo.easycontrol.app.databinding.ItemSetDeviceBinding;
+/**
+ * 类 DeviceListAdapter
+ * 说明：该类负责 DeviceListAdapter 相关功能。
+ */
 
 public class DeviceListAdapter extends BaseExpandableListAdapter {
 

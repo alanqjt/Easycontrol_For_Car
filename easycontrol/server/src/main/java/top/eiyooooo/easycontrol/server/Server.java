@@ -18,6 +18,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
+/**
+ * 类 Server
+ * 说明：该类负责 Server 相关功能。
+ */
 
 public class Server {
     Channel channel;

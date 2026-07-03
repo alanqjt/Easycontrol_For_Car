@@ -12,6 +12,10 @@ import androidx.annotation.NonNull;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
+/**
+ * 类 VideoDecode
+ * 说明：该类负责 VideoDecode 相关功能。
+ */
 
 public class VideoDecode {
   private MediaCodec decodec;

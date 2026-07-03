@@ -13,6 +13,10 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
+/**
+ * 类 Workarounds
+ * 说明：该类负责 Workarounds 相关功能。
+ */
 @SuppressLint("PrivateApi,BlockedPrivateApi,SoonBlockedPrivateApi,DiscouragedPrivateApi")
 public final class Workarounds {
     private static final Class<?> ACTIVITY_THREAD_CLASS;

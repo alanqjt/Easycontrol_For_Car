@@ -6,6 +6,10 @@ import java.lang.reflect.Method;
 import java.util.Objects;
 
 import top.eiyooooo.easycontrol.server.utils.L;
+/**
+ * 类 UiModeManager
+ * 说明：该类负责 UiModeManager 相关功能。
+ */
 
 public class UiModeManager {
     private static IInterface manager;
