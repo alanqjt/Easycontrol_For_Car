@@ -83,11 +83,6 @@ public final class AudioEncode {
                     int size = (int) buffer.getLong();
                     buffer.limit(buffer.position() + size);
                 }
-                // 当无声音时不发送
-                if (buffer.remaining() < 5) {
-                    encoder.releaseOutputBuffer(outIndex, false);
-                    return;
-                }
             }
             ControlPacket.sendAudioEvent(buffer);
             encoder.releaseOutputBuffer(outIndex, false);
@@ -107,4 +102,3 @@ public final class AudioEncode {
         }
     }
 }
-

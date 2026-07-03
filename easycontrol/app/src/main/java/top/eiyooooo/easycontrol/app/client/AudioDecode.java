@@ -30,7 +30,12 @@ public class AudioDecode {
 
     @Override
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
-      audioTrack.write(decodec.getOutputBuffer(outIndex), bufferInfo.size, AudioTrack.WRITE_NON_BLOCKING);
+      ByteBuffer outputBuffer = decodec.getOutputBuffer(outIndex);
+      if (outputBuffer != null && bufferInfo.size > 0) {
+        outputBuffer.position(bufferInfo.offset);
+        outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
+        audioTrack.write(outputBuffer, bufferInfo.size, AudioTrack.WRITE_BLOCKING);
+      }
       decodec.releaseOutputBuffer(outIndex, false);
     }
 
@@ -119,7 +124,7 @@ public class AudioDecode {
   // 创建AudioTrack
   private void setAudioTrack() {
     int sampleRate = 48000;
-    int bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT) * 4;
+    int bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT) * 2;
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
       AudioTrack.Builder audioTrackBuild = new AudioTrack.Builder();
       // 1
@@ -137,6 +142,10 @@ public class AudioDecode {
       audioTrackBuild.setBufferSizeInBytes(bufferSize);
       audioTrackBuild.setAudioAttributes(audioAttributesBulider.build());
       audioTrackBuild.setAudioFormat(audioFormat.build());
+      audioTrackBuild.setTransferMode(AudioTrack.MODE_STREAM);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        audioTrackBuild.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
+      }
       // 4
       audioTrack = audioTrackBuild.build();
     } else audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
