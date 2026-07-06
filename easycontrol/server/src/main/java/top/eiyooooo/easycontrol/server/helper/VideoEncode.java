@@ -70,7 +70,18 @@ public final class VideoEncode {
 
         encoderFormat.setInteger(MediaFormat.KEY_BIT_RATE, Options.maxVideoBit);
         encoderFormat.setInteger(MediaFormat.KEY_FRAME_RATE, Options.maxFps);
-        encoderFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 10);
+        // 缩短关键帧间隔，客户端必要时丢旧帧后能更快恢复清晰画面。
+        encoderFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2);
+        // 尽量使用稳定码率，避免码率大幅波动导致网络/USB 写入抖动。
+        if (encoder.getCodecInfo().getCapabilitiesForType(codecMime).getEncoderCapabilities()
+                .isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)) {
+            encoderFormat.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
+        }
+        // 请求编码器按实时场景工作，降低内部排队延迟；不支持的编码器会忽略这些 hint。
+        encoderFormat.setInteger(MediaFormat.KEY_PRIORITY, 0);
+        encoderFormat.setInteger(MediaFormat.KEY_OPERATING_RATE, Options.maxFps);
+        encoderFormat.setInteger(MediaFormat.KEY_LATENCY, 0);
+        encoderFormat.setInteger(MediaFormat.KEY_LOW_LATENCY, 1);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
             encoderFormat.setInteger(MediaFormat.KEY_INTRA_REFRESH_PERIOD, Options.maxFps * 3);
         encoderFormat.setFloat("max-fps-to-encoder", Options.maxFps);

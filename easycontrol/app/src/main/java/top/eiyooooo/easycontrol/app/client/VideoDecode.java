@@ -18,6 +18,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * 这里的输入队列和回调节奏，决定了画面是否流畅、首帧是否及时。
  */
 public class VideoDecode {
+  private static final int MAX_PENDING_VIDEO_FRAMES = 4;
   // MediaCodec 解码器实例。
   private MediaCodec decodec;
   // 异步回调，负责处理输入和输出缓冲区。
@@ -31,8 +32,8 @@ public class VideoDecode {
 
     @Override
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
-      // 输出帧直接交给 Surface，presentationTimeUs 用来控制显示节奏。
-      mediaCodec.releaseOutputBuffer(outIndex, bufferInfo.presentationTimeUs);
+      // 投屏更需要低延迟，输出帧直接立即渲染，避免按旧时间戳排队等待。
+      mediaCodec.releaseOutputBuffer(outIndex, true);
     }
 
     @Override
@@ -62,6 +63,9 @@ public class VideoDecode {
   private final LinkedBlockingQueue<Integer> intputBufferQueue = new LinkedBlockingQueue<>();
 
   public void decodeIn(byte[] data, long pts) {
+    while (intputDataQueue.size() >= MAX_PENDING_VIDEO_FRAMES) {
+      intputDataQueue.poll();
+    }
     // 视频帧会带时间戳，保证播放顺序和同步。
     intputDataQueue.offer(new Pair<>(data, pts));
     checkDecode();
