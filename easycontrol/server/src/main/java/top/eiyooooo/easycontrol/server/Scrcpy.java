@@ -22,13 +22,18 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 
 public final class Scrcpy {
+    // 线程同步对象，用来在连接断开时唤醒主线程退出。
     private static final Object object = new Object();
+    // 空闲超时阈值，避免连接断开后进程一直挂着。
     private static final int timeoutDelay = 5 * 1000;
 
     public static void main(String... args) {
+        // 服务端日志模式，便于在 shell 里直接看输出。
         L.logMode = 1;
+        // 打开日志输出。
         L.postLog();
         try {
+            // 超时线程：如果一段时间内没有心跳，就主动释放。
             Thread timeOutThread = new Thread(() -> {
                 try {
                     Thread.sleep(timeoutDelay);
@@ -37,18 +42,18 @@ public final class Scrcpy {
                 }
             });
             timeOutThread.start();
-            // 解析参数
+            // 解析启动参数，控制音频、视频、码率等行为。
             Options.parse(args);
-            // 初始化
+            // 初始化兼容性修正和系统服务。
             Workarounds.apply(1);
             ServiceManager.setManagers();
             Device.init();
-            // 连接
+            // 先建立本地 socket 连接，再启动编码和控制线程。
             connectClient();
-            // 初始化子服务
+            // 初始化音频和视频编码子服务。
             boolean canAudio = AudioEncode.init();
             VideoEncode.init();
-            // 启动
+            // 启动数据流线程。
             ArrayList<Thread> threads = new ArrayList<>();
             threads.add(new Thread(Scrcpy::executeVideoOut));
             if (canAudio) {
@@ -58,27 +63,31 @@ public final class Scrcpy {
             threads.add(new Thread(Scrcpy::executeControlIn));
             for (Thread thread : threads) thread.setPriority(Thread.MAX_PRIORITY);
             for (Thread thread : threads) thread.start();
-            // 程序运行
+            // 连接成功后，超时线程就不再需要了。
             timeOutThread.interrupt();
             if (Options.TurnOnScreenIfStart) {
+                // 启动时可选地点亮屏幕。
                 Device.keyEvent(224, 0, 0);
                 if (Options.TurnOffScreenIfStart)
+                    // 点亮后再延迟熄屏，方便某些车机兼容性处理。
                     postDelayed(() -> Device.changeScreenPowerMode(Display.STATE_UNKNOWN), 2000);
             }
             synchronized (object) {
+                // 阻塞等待退出信号。
                 object.wait();
             }
-            // 终止子服务
+            // 收到退出信号后，中断所有工作线程。
             for (Thread thread : threads) thread.interrupt();
         } catch (Exception e) {
             L.e("startScrcpy error", e);
         } finally {
-            // 释放资源
+            // 不管是否异常，都尽量收尾释放。
             release();
         }
     }
 
     public static void postDelayed(Runnable runnable, long delayMillis) {
+        // 简单的延迟执行工具，避免引入额外调度器。
         new Thread(() -> {
             try {
                 Thread.sleep(delayMillis);
@@ -96,6 +105,7 @@ public final class Scrcpy {
     public static DataInputStream inputStream;
 
     private static void connectClient() throws IOException {
+        // 使用本地 socket 连接 app 端发起的客户端。
         try (LocalServerSocket serverSocket = new LocalServerSocket("easycontrol_for_car_scrcpy")) {
             mainSocket = serverSocket.accept();
             videoSocket = serverSocket.accept();
@@ -109,6 +119,7 @@ public final class Scrcpy {
         try {
             int frame = 0;
             while (!Thread.interrupted()) {
+                // 如果视频参数变了，先停再重建编码器。
                 if (VideoEncode.isHasChangeConfig) {
                     VideoEncode.isHasChangeConfig = false;
                     VideoEncode.stopEncode();
@@ -117,6 +128,7 @@ public final class Scrcpy {
                 VideoEncode.encodeOut();
                 frame++;
                 if (frame > 120) {
+                    // 定期检查 keep-alive，防止死连接。
                     if (System.currentTimeMillis() - lastKeepAliveTime > timeoutDelay) {
                         timeoutClose = true;
                         throw new IOException("Connection disconnected");
@@ -130,11 +142,13 @@ public final class Scrcpy {
     }
 
     private static void executeAudioIn() {
+        // 音频输入线程：持续把麦克风/系统混音数据送进编码器。
         while (!Thread.interrupted()) AudioEncode.encodeIn();
     }
 
     private static void executeAudioOut() {
         try {
+            // 音频输出线程：持续取编码结果并发送到客户端。
             while (!Thread.interrupted()) AudioEncode.encodeOut();
         } catch (IOException | ErrnoException e) {
             errorClose(e);
@@ -146,6 +160,7 @@ public final class Scrcpy {
     private static void executeControlIn() {
         try {
             while (!Thread.interrupted()) {
+                // 控制通道按单字节命令码分发。
                 switch (inputStream.readByte()) {
                     case 1:
                         ControlPacket.handleTouchEvent();
@@ -157,6 +172,7 @@ public final class Scrcpy {
                         ControlPacket.handleClipboardEvent();
                         break;
                     case 4:
+                        // 心跳包刷新活跃时间戳。
                         ControlPacket.sendKeepAlive();
                         lastKeepAliveTime = System.currentTimeMillis();
                         break;
@@ -184,14 +200,17 @@ public final class Scrcpy {
     }
 
     public synchronized static void writeMain(ByteBuffer byteBuffer) throws IOException, ErrnoException {
+        // 把数据写到 main socket，直到全部写完。
         while (byteBuffer.remaining() > 0) Os.write(mainFD, byteBuffer);
     }
 
     public synchronized static void writeVideo(ByteBuffer byteBuffer) throws IOException, ErrnoException {
+        // 视频数据走单独的 socket，避免和控制流互相阻塞。
         while (byteBuffer.remaining() > 0) Os.write(videoFD, byteBuffer);
     }
 
     public static void errorClose(Exception e) {
+        // 出错时统一走这里收尾。
         L.e("errorClose: ", e);
         synchronized (object) {
             object.notify();
@@ -202,6 +221,7 @@ public final class Scrcpy {
 
     // 释放资源
     private static void release() {
+        // 检查是不是最后一个 scrcpy 实例，决定是否恢复一些全局状态。
         boolean lastScrcpy = false;
         try {
             lastScrcpy = Integer.parseInt(Channel.execReadOutput("ps -ef | grep easycontrol.server.Scrcpy | grep -v grep | grep -c 'easycontrol.server.Scrcpy'").replace("<!@n@!>", "")) == 1;
@@ -209,7 +229,7 @@ public final class Scrcpy {
             L.w("get lastScrcpy error", e);
         }
 
-        // 1
+        // 1. 先关闭 socket 与输入流。
         try {
             inputStream.close();
             mainSocket.close();
@@ -218,11 +238,11 @@ public final class Scrcpy {
             L.e("release error", e);
         }
 
-        // 2
+        // 2. 释放音视频编码器。
         VideoEncode.release();
         AudioEncode.release();
 
-        // 3
+        // 3. 恢复被修改过的屏幕尺寸、密度和夜间模式。
         if (Device.needReset) {
             try {
                 if (Device.realDeviceSize != null)
@@ -246,7 +266,7 @@ public final class Scrcpy {
             UiModeManager.setNightMode(Device.oldNightMode);
         }
 
-        // 4
+        // 4. 如果开启了保持唤醒，就把熄屏超时恢复回去。
         if (Options.keepAwake) {
             try {
                 Channel.execReadOutput("settings put system screen_off_timeout " + Device.oldScreenOffTimeout);
@@ -255,7 +275,7 @@ public final class Scrcpy {
             }
         }
 
-        // 5
+        // 5. 如有必要，把状态改回关闭并唤醒主线程退出。
         try {
             if (timeoutClose || lastScrcpy) {
                 if (Options.TurnOffScreenIfStop) Device.keyEvent(223, 0, 0);

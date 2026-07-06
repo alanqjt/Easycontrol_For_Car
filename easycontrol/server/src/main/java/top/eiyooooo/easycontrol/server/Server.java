@@ -19,27 +19,37 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
 /**
- * 类 Server
- * 说明：该类负责 Server 相关功能。
+ * 服务端管理入口。
+ * 这个类更像是一个本地命令壳，用来接收调试指令、创建虚拟显示器、
+ * 打开应用、调整分辨率，以及把结果回写给上层调用者。
  */
-
 public class Server {
+    // 当前 Server 实例持有的通道对象，负责真正和系统服务交互。
     Channel channel;
+    // 标准输出流，用于向调用者回写结果。
     public static DataOutputStream outputStream;
 
     public static void main(String... args) throws Exception {
+        // 让日志更偏向服务端场景，方便排查车机问题。
         L.logMode = 2;
+        // 把结果直接写到标准输出，供外层进程读取。
         outputStream = new DataOutputStream(System.out);
+        // 应用一些系统兼容性修正，尽量让后面的反射调用稳定。
         Workarounds.apply(0);
+        // 初始化系统服务代理，后续很多能力都靠它转发。
         ServiceManager.setManagers();
+        // 创建 Server，启动命令处理线程。
         new Server();
+        // 主线程保持存活，直到外部结束进程。
         while (true) {
             Thread.sleep(1000);
         }
     }
 
     public Server() {
+        // 后台监听输入命令。
         inputHandler();
+        // 初始化系统通道对象。
         this.channel = new Channel();
     }
 
@@ -47,15 +57,20 @@ public class Server {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                // 从标准输入读取调试命令。
                 Scanner scanner = new Scanner(System.in);
                 while (true) {
                     try {
+                        // 一行一条命令，支持 /path?key=value 这种简易格式。
                         String input = scanner.nextLine();
                         L.d("INPUT: " + input);
+                        // /exit 用于快速退出服务端。
                         if (input.startsWith("/exit")) System.exit(0);
+                        // 其余以 / 开头的内容都按请求处理。
                         else if (input.startsWith("/")) handleRequest(parseRequest(input));
                         else throw new Exception("Unknown command");
                     } catch (Exception e) {
+                        // 输入异常不应该拖垮整个服务端。
                         L.e("consoleInputHandler error", e);
                     }
                 }
@@ -65,25 +80,31 @@ public class Server {
 
     private void postResponse(String response) {
         try {
+            // 统一空值，避免上层解析时出现歧义。
             if (response == null) response = "null";
             L.d("RESPONSE: " + response);
+            // 先写长度，再写内容，方便上层按字节读取。
             byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
             outputStream.writeInt(responseBytes.length);
             outputStream.writeInt(responseBytes.length);
             outputStream.write(responseBytes);
         } catch (Exception e) {
+            // 输出失败时只记录，不直接中断业务流程。
             L.e("postResponse error", e);
         }
     }
 
     private static HashMap<String, String> parseRequest(String input) {
+        // 解析成 key-value 结构，便于后面按参数名读取。
         HashMap<String, String> request = new HashMap<>();
 
+        // 先取路径，再取查询参数。
         String[] parts = input.split("\\?");
         String path = parts[0];
         request.put("request", path);
         if (parts.length == 1) return request;
 
+        // 后半段是查询参数，按照 & 和 = 拆开。
         String params = parts[1];
         String[] keyValuePairs = params.split("&");
         for (String pair : keyValuePairs) {
@@ -96,16 +117,20 @@ public class Server {
         return request;
     }
 
+    // 保存创建过的虚拟显示器，方便后面 resize / release。
     Map<Integer, VirtualDisplay> cache = new HashMap<>();
 
     private void handleRequest(HashMap<String, String> request) {
         try {
+            // 根据 request 字段分发到不同功能。
             switch (Objects.requireNonNull(request.get("request"))) {
                 case "/getPhoneInfo": {
+                    // 返回设备基础信息。
                     postResponse(Channel.getPhoneInfo().toString());
                     break;
                 }
                 case "/getRecentTasks": {
+                    // 获取最近任务列表，参数都允许缺省。
                     String line1 = request.get("maxNum");
                     String line2 = request.get("flags");
                     String line3 = request.get("userId");
@@ -146,8 +171,10 @@ public class Server {
                     break;
                 }
                 case "/createVirtualDisplay": {
+                    // Android 11 以下不支持这里的虚拟显示创建逻辑。
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
                         throw new Exception("Virtual display is not supported before Android 11");
+                    // width/height/density 都是可选参数。
                     String line1 = request.get("width");
                     String line2 = request.get("height");
                     String line3 = request.get("density");
@@ -156,6 +183,7 @@ public class Server {
                     if (line1 == null && line2 != null)
                         throw new Exception("parameter 'height' found, but 'width' not found");
 
+                    // 读取默认屏幕参数，作为新虚拟屏幕的参考。
                     DisplayInfo defaultDisplay = DisplayManager.getDisplayInfo(Display.DEFAULT_DISPLAY);
                     int width, height, density;
                     if (line1 != null) {
@@ -174,9 +202,11 @@ public class Server {
                     if (line3 != null) density = Integer.parseInt(line3);
                     else density = defaultDisplay.density;
 
+                    // 真正创建虚拟显示器。
                     VirtualDisplay display = channel.createVirtualDisplay(width, height, density);
                     if (display == null) throw new Exception("Failed to create virtual display");
                     int createdDisplayId = display.getDisplay().getDisplayId();
+                    // 缓存下来，后续可以重设尺寸或释放。
                     cache.put(createdDisplayId, display);
                     int[] displayIds = DisplayManager.getDisplayIds();
                     for (int displayId : displayIds) {
@@ -186,6 +216,7 @@ public class Server {
                     break;
                 }
                 case "/resizeDisplay": {
+                    // 修改系统显示或虚拟显示器尺寸。
                     String line1 = request.get("id");
                     String line2 = request.get("width");
                     String line3 = request.get("height");
@@ -214,9 +245,11 @@ public class Server {
                     else density = display.density;
 
                     if (id == 0) {
+                        // id 为 0 时表示改的是系统主屏参数。
                         if (line2 != null) Channel.execReadOutput("wm size " + width + "x" + height);
                         if (line4 != null) Channel.execReadOutput("wm density " + density);
                     } else {
+                        // 非 0 时说明是本类创建的虚拟显示器。
                         VirtualDisplay virtualDisplay = cache.get(id);
                         if (virtualDisplay == null)
                             throw new Exception("specified virtual display not found, it might not be created by this server");
@@ -226,6 +259,7 @@ public class Server {
                     break;
                 }
                 case "/releaseVirtualDisplay": {
+                    // 释放虚拟显示器之前，先把对应任务移回默认屏幕。
                     String id = request.get("id");
                     if (id == null) throw new Exception("parameter 'id' not found");
                     VirtualDisplay display = cache.get(Integer.parseInt(id));
@@ -248,6 +282,7 @@ public class Server {
                     break;
                 }
                 case "/openAppByPackage": {
+                    // 按包名打开应用，也可以指定 activity 和显示器。
                     String packageName = request.get("package");
                     String activity = request.get("activity");
                     String id = request.get("displayId");

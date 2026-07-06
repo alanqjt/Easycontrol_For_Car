@@ -31,40 +31,45 @@ import top.eiyooooo.easycontrol.app.buffer.BufferStream;
 import top.eiyooooo.easycontrol.app.client.view.ClientView;
 
 public class Client {
-  // 状态，0为初始，1为连接，-1为关闭
+  // 状态，0 表示初始化中，1 表示已连接，-1 表示已关闭。
   private int status = 0;
+  // 当前进程里所有 Client 实例的集合，用于管理多连接场景。
   public static final ArrayList<Client> allClient = new ArrayList<>();
 
-  // 连接
+  // 连接相关对象。
   public Adb adb;
   private BufferStream bufferStream;
   private BufferStream videoStream;
   private BufferStream shell;
 
-  // 子服务
+  // 子服务线程：分别处理控制输入和视频输入。
   private final Thread executeStreamInThread = new Thread(this::executeStreamIn);
   private final Thread executeStreamVideoThread = new Thread(this::executeStreamVideo);
   private HandlerThread handlerThread;
   private Handler handler;
   private VideoDecode videoDecode;
   private AudioDecode audioDecode;
+  // 控制包封装器，最终会把二进制协议写入底层通道。
   public final ControlPacket controlPacket = new ControlPacket(this::write);
   public final ClientView clientView;
   public final String uuid;
-  public int mode = 0; // 0为屏幕镜像模式，1为应用流转模式
+  // 0 为屏幕镜像模式，1 为应用流转模式。
+  public int mode = 0;
   public int displayId = 0;
   private Thread startThread;
   private final Thread loadingTimeOutThread;
   private final Thread keepAliveThread;
   private static final int timeoutDelay = 5 * 1000;
   private long lastKeepAliveTime;
-  public int multiLink = 0; // 0为单连接，1为多连接主，2为多连接从
+  // 0 为单连接，1 为多连接主，2 为多连接从。
+  public int multiLink = 0;
 
   private static final String serverName = "/data/local/tmp/easycontrol_for_car_server_" + BuildConfig.VERSION_CODE + ".jar";
   private static final boolean supportH265 = PublicTools.isDecoderSupport("hevc");
   private static final boolean supportOpus = PublicTools.isDecoderSupport("opus");
 
   public Client(Device device, UsbDevice usbDevice, int mode) {
+    // 如果当前设备已经有一个 Client 在跑，多连接时需要重新标记主从关系。
     for (Client client : allClient) {
       if (client.uuid.equals(device.uuid)) {
         if (client.multiLink == 0) client.changeMultiLinkMode(1);
@@ -74,22 +79,26 @@ public class Client {
     }
     allClient.add(this);
     if (!EventMonitor.monitorRunning && AppData.setting.getMonitorState()) EventMonitor.startMonitor();
-    // 初始化
+    // 初始化设备标识。
     uuid = device.uuid;
+    // 如果指定了转移模式，就先标记为已转移。
     if (mode == 0) specifiedTransferred = true;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      // 音视频解码回调线程。
       handlerThread = new HandlerThread("easycontrol_mediacodec");
       handlerThread.start();
       handler = new Handler(handlerThread.getLooper());
     }
+    // 创建客户端界面对象，连接成功后会自动启动后续线程。
     clientView = new ClientView(device, controlPacket, this::changeMode, () -> {
       status = 1;
       executeStreamInThread.start();
       executeStreamVideoThread.start();
       AppData.uiHandler.post(this::executeOtherService);
     }, () -> release(null));
+    // 显示加载中弹窗，提示用户正在连接。
     Pair<View, WindowManager.LayoutParams> loading = PublicTools.createLoading(AppData.main);
-    // 连接
+    // 连接超时线程，防止连接卡死。
     loadingTimeOutThread = new Thread(() -> {
       try {
         Thread.sleep(timeoutDelay);
@@ -99,6 +108,7 @@ public class Client {
       } catch (InterruptedException ignored) {
       }
     });
+    // 保活线程，持续监控与服务端之间的心跳。
     keepAliveThread = new Thread(() -> {
       lastKeepAliveTime = System.currentTimeMillis();
       while (status != -1) {
@@ -110,6 +120,7 @@ public class Client {
         }
       }
     });
+    // 真正发起连接和初始化服务端的线程。
     startThread = new Thread(() -> {
       try {
         adb = connectADB(device, usbDevice);
@@ -137,7 +148,7 @@ public class Client {
     startThread.start();
   }
 
-  // 连接ADB
+  // 连接 ADB，如果同一个设备已经有连接则复用。
   private static Adb connectADB(Device device, UsbDevice usbDevice) throws Exception {
     if (Adb.adbMap.containsKey(device.uuid)) return Adb.adbMap.get(device.uuid);
     Adb adb;
@@ -147,7 +158,7 @@ public class Client {
     return adb;
   }
 
-  // 启动Server
+  // 启动服务端 JAR。
   private void startServer(Device device) throws Exception {
     if (adb.serverShell == null || adb.serverShell.isClosed()) adb.startServer();
     shell = adb.getShell();
@@ -174,6 +185,7 @@ public class Client {
 
   private Thread loggerThread;
   private void logger() {
+    // 持续读取服务端 shell 输出，方便把日志同步到 app 侧。
     loggerThread = new Thread(() -> {
       try {
         while (!Thread.interrupted()) {
@@ -189,9 +201,11 @@ public class Client {
 
   private void tryCreateDisplay(Device device) {
     try {
+      // 根据用户设置决定是否启用强制桌面模式。
       if (AppData.setting.getForceDesktopMode()) adb.runAdbCmd("settings put global force_desktop_mode_on_external_displays 1");
       else adb.runAdbCmd("settings put global force_desktop_mode_on_external_displays 0");
 
+      // 让服务端创建一个可供应用转移使用的虚拟显示器。
       String output = Adb.getStringResponseFromServer(device, "createVirtualDisplay");
       if (output.contains("success")) {
         displayId = Integer.parseInt(output.substring(output.lastIndexOf(" -> ") + 4));
@@ -208,6 +222,7 @@ public class Client {
   boolean specifiedTransferred = false;
   private void appTransfer(Device device) {
     try {
+      // 先尽量拿到最近任务列表，用于决定把哪个任务移到新显示器。
       JSONArray tasksArray = null;
       try {
         JSONObject tasks = new JSONObject(Adb.getStringResponseFromServer(device, "getRecentTasks"));
@@ -223,6 +238,7 @@ public class Client {
       } catch (Exception ignored) {
       }
       if (!specifiedTransferred && !device.specified_app.isEmpty()) {
+        // 如果用户指定了目标应用，就优先把这个应用转移过去。
         String checkApp = Adb.getStringResponseFromServer(device, "getAppMainActivity", "package=" + device.specified_app);
         if (checkApp.isEmpty()) {
           PublicTools.logToast(AppData.main.getString(R.string.error_app_not_found));
@@ -241,15 +257,18 @@ public class Client {
             }
           }
           if (appTaskId == 0) {
+            // 应用还没在前台时，直接拉起到目标显示器。
             String output = Adb.getStringResponseFromServer(device, "openAppByPackage", "package=" + device.specified_app, "displayId=" + displayId);
             if (output.contains("failed")) throw new Exception("");
           } else {
+            // 已经运行的应用则直接移动任务栈。
             String output = adb.runAdbCmd("am display move-stack " + appTaskId + " " + displayId);
             if (output.contains("Exception")) throw new Exception("");
           }
           specifiedTransferred = true;
         }
       } else {
+        // 没有指定应用时，默认把最近前台任务移动过去。
         if (tasksArray != null && tasksArray.length() > 0) {
           String output = adb.runAdbCmd("am display move-stack " + tasksArray.getJSONObject(0).getInt("taskId") + " " + displayId);
           if (output.contains("Exception")) throw new Exception("");

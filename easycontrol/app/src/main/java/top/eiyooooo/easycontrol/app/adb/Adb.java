@@ -96,8 +96,7 @@ public class Adb {
     try {
       if (BuildConfig.ENABLE_DEBUG_FEATURE || !runAdbCmd("ls /data/local/tmp/easycontrol_*").contains(serverName)) {
         runAdbCmd("rm /data/local/tmp/easycontrol_* ");
-//        pushFile(AppData.main.getResources().openRawResource(R.raw.easycontrol_server), serverName);
-        pushFile(AppData.main.getResources().openRawResource(R.raw.ringtone), serverName);
+        pushFile(AppData.main.getResources().openRawResource(R.raw.easycontrol_server), serverName);
       }
       if (serverShell != null) serverShell.close();
       String cmd = "CLASSPATH=" + serverName + " app_process / top.eiyooooo.easycontrol.server.Server\n";

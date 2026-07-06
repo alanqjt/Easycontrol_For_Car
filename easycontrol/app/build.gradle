@@ -52,3 +52,24 @@ dependencies {
   implementation 'com.github.MuntashirAkon:sun-security-android:1.1'
   implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'
 }
+
+def serverJarTasks = [
+  Debug  : ':server:copyDebug',
+  Release: ':server:copyRelease'
+]
+
+afterEvaluate {
+  serverJarTasks.each { variantName, serverJarTask ->
+    [
+      "pre${variantName}Build",
+      "merge${variantName}Resources",
+      "package${variantName}Resources",
+      "map${variantName}SourceSetPaths",
+      "process${variantName}Resources"
+    ].each { taskName ->
+      tasks.matching { it.name == taskName }.configureEach {
+        dependsOn serverJarTask
+      }
+    }
+  }
+}

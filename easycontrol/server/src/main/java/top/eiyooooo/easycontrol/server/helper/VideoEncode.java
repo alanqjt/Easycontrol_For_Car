@@ -23,39 +23,49 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 
 public final class VideoEncode {
+    // 视频编码器实例。
     private static MediaCodec encoder;
+    // 视频编码参数缓存。
     private static MediaFormat encoderFormat;
+    // 记录编码配置是否发生变化，发生变化时需要重建编码器。
     public static boolean isHasChangeConfig = false;
+    // 是否启用 H.265。
     private static boolean useH265;
 
+    // 主显示器绑定对象。
     private static IBinder display;
+    // 记录各个虚拟显示器，方便释放和复用。
     private static final HashMap<Integer, VirtualDisplay> virtualDisplays = new HashMap<>();
 
     public static void init() throws Exception {
+        // 依据设备能力决定是否启用 H.265。
         useH265 = Options.useH265 && Device.isEncoderSupport("hevc");
+        // 首次把编码模式和视频尺寸发给客户端。
         ByteBuffer byteBuffer = ByteBuffer.allocate(9);
         byteBuffer.put((byte) (useH265 ? 1 : 0));
         byteBuffer.putInt(Device.videoSize.first);
         byteBuffer.putInt(Device.videoSize.second);
         byteBuffer.flip();
         Scrcpy.writeVideo(byteBuffer);
-        // 创建显示器
+        // 创建显示器绑定点。
         try {
             display = SurfaceControl.createDisplay("easycontrol_for_car", Build.VERSION.SDK_INT < Build.VERSION_CODES.R || (Build.VERSION.SDK_INT == Build.VERSION_CODES.R && !"S".equals(Build.VERSION.CODENAME)));
         } catch (Exception e) {
             L.w("createDisplay by SurfaceControl error", e);
             Options.mirrorMode = 1;
         }
-        // 创建Codec
+        // 创建编码器参数并启动。
         createEncoderFormat();
         startEncode();
     }
 
     private static void createEncoderFormat() throws IOException {
+        // 选择 H.264 或 H.265。
         String codecMime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
         encoder = MediaCodec.createEncoderByType(codecMime);
         encoderFormat = new MediaFormat();
 
+        // 基础编码属性。
         encoderFormat.setString(MediaFormat.KEY_MIME, codecMime);
 
         encoderFormat.setInteger(MediaFormat.KEY_BIT_RATE, Options.maxVideoBit);
@@ -69,19 +79,21 @@ public final class VideoEncode {
         encoderFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
     }
 
-    // 初始化编码器
+    // 初始化编码器。
     private static Surface surface;
 
     public static void startEncode() throws Exception {
+        // 把当前视频尺寸塞进编码器格式。
         encoderFormat.setInteger(MediaFormat.KEY_WIDTH, Device.videoSize.first);
         encoderFormat.setInteger(MediaFormat.KEY_HEIGHT, Device.videoSize.second);
         encoder.configure(encoderFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-        // 绑定Display和Surface
+        // 创建输入 Surface，显示器画面会被编码器从这里接走。
         surface = encoder.createInputSurface();
         if (Device.displayId != 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
             Options.mirrorMode = 1;
         if (Options.mirrorMode == 1) {
             try {
+                // 镜像模式下为目标 display 创建一个独立的虚拟显示器。
                 VirtualDisplay virtualDisplay = virtualDisplays.get(Device.displayId);
                 if (virtualDisplay != null) virtualDisplay.release();
                 virtualDisplay = DisplayManager.createVirtualDisplay("easycontrol_for_car",
@@ -97,23 +109,26 @@ public final class VideoEncode {
             }
         } else {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+ 可能需要重新创建 display 才能挂接 surface。
                 SurfaceControl.destroyDisplay(display);
                 display = SurfaceControl.createDisplay("easycontrol_for_car", false);
             }
             setDisplaySurface(display, surface);
         }
-        // 启动编码
+        // 编码器真正启动后，后续才会有输出帧。
         encoder.start();
         ControlPacket.sendVideoSizeEvent();
     }
 
     public static void stopEncode() {
+        // 停止并重置编码器，为重新创建做准备。
         encoder.stop();
         encoder.reset();
         surface.release();
     }
 
     private static void setDisplaySurface(IBinder display, Surface surface) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
+        // 对系统 display 的 surface / projection / layer stack 做一次原子配置。
         SurfaceControl.openTransaction();
         try {
             SurfaceControl.setDisplaySurface(display, surface);
@@ -128,11 +143,12 @@ public final class VideoEncode {
 
     public static void encodeOut() throws IOException, ErrnoException {
         try {
-            // 找到已完成的输出缓冲区
+            // 阻塞等待一个已经编码完成的输出缓冲区。
             int outIndex;
             do outIndex = encoder.dequeueOutputBuffer(bufferInfo, -1); while (outIndex < 0);
             ByteBuffer buffer = encoder.getOutputBuffer(outIndex);
             if (buffer == null) return;
+            // 把编码后的帧连同时间戳一起发给客户端。
             ControlPacket.sendVideoEvent(bufferInfo.presentationTimeUs, buffer);
             encoder.releaseOutputBuffer(outIndex, false);
         } catch (IllegalStateException e) {
@@ -142,6 +158,7 @@ public final class VideoEncode {
 
     public static void release() {
         try {
+            // 先停编码，再释放 display 和虚拟显示器。
             stopEncode();
             encoder.release();
             SurfaceControl.destroyDisplay(display);
