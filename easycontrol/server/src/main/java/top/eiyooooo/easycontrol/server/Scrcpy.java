@@ -103,6 +103,9 @@ public final class Scrcpy {
     private static LocalSocket videoSocket;
     private static FileDescriptor videoFD;
     public static DataInputStream inputStream;
+    // main 和 video 是两条独立 socket，不能共用 class 锁，否则视频写阻塞会拖住音频/控制通道。
+    private static final Object mainWriteLock = new Object();
+    private static final Object videoWriteLock = new Object();
 
     private static void connectClient() throws IOException {
         // 使用本地 socket 连接 app 端发起的客户端。
@@ -199,14 +202,18 @@ public final class Scrcpy {
         }
     }
 
-    public synchronized static void writeMain(ByteBuffer byteBuffer) throws IOException, ErrnoException {
-        // 把数据写到 main socket，直到全部写完。
-        while (byteBuffer.remaining() > 0) Os.write(mainFD, byteBuffer);
+    public static void writeMain(ByteBuffer byteBuffer) throws IOException, ErrnoException {
+        synchronized (mainWriteLock) {
+            // 把数据写到 main socket，直到全部写完；同一通道内仍需串行，避免音频/控制包交叉。
+            while (byteBuffer.remaining() > 0) Os.write(mainFD, byteBuffer);
+        }
     }
 
-    public synchronized static void writeVideo(ByteBuffer byteBuffer) throws IOException, ErrnoException {
-        // 视频数据走单独的 socket，避免和控制流互相阻塞。
-        while (byteBuffer.remaining() > 0) Os.write(videoFD, byteBuffer);
+    public static void writeVideo(ByteBuffer byteBuffer) throws IOException, ErrnoException {
+        synchronized (videoWriteLock) {
+            // 视频数据走单独的 socket；独立锁避免网络/解码背压时拖慢音频。
+            while (byteBuffer.remaining() > 0) Os.write(videoFD, byteBuffer);
+        }
     }
 
     public static void errorClose(Exception e) {

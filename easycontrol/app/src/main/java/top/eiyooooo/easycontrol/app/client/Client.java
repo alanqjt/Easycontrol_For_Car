@@ -527,6 +527,8 @@ public class Client {
   }
 
   public void changeMultiLinkMode(int multiLink) {
+    this.multiLink = multiLink;
+    clientView.multiLink = multiLink;
     playAudio(multiLink == 0 || multiLink == 1);
     if (multiLink == 2) {
       clientView.device.clipboardSync = false;
@@ -535,8 +537,6 @@ public class Client {
       if (clientView.deviceOriginal.clipboardSync) clientView.device.clipboardSync = true;
       if (clientView.deviceOriginal.nightModeSync) clientView.device.nightModeSync = true;
     }
-    this.multiLink = multiLink;
-    clientView.multiLink = multiLink;
   }
 
   public void playAudio(boolean play) {

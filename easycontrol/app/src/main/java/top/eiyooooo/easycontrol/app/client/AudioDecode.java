@@ -23,13 +23,18 @@ import java.util.concurrent.LinkedBlockingQueue;
  * 这里的缓冲区处理方式会直接影响导航播报是否会“吃字”或延迟。
  */
 public class AudioDecode {
-  private static final int MAX_PENDING_AUDIO_FRAMES = 8;
+  // 每帧约 20ms，24 帧约 480ms；给车机端留一点抗抖空间，避免 AudioTrack underrun 后卡顿/吞字。
+  private static final int MAX_PENDING_AUDIO_FRAMES = 24;
+  // 车机端音频线程和视频解码经常抢资源，播放缓冲放大到 4 倍比 2 倍更稳。
+  private static final int AUDIO_TRACK_BUFFER_MULTIPLIER = 4;
   // MediaCodec 解码器实例，负责把压缩音频转成 PCM。
   public MediaCodec decodec;
   // 最终把 PCM 写入系统音频输出的播放器对象。
   public AudioTrack audioTrack;
   // 轻量音量增强器，让车机里导航提示音更容易听清。
   public LoudnessEnhancer loudnessEnhancer;
+  // 当前这路音频是否允许真正播放；非 owner 暂停时仍可解码，但会丢弃 PCM，避免堵住 AudioTrack。
+  private volatile boolean shouldPlay = false;
   // 异步回调：解码器有输入/输出缓冲区时会通过它通知我们。
   private final MediaCodec.Callback callback = new MediaCodec.Callback() {
     @Override
@@ -44,17 +49,19 @@ public class AudioDecode {
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
       // 取出本次输出缓冲区里的 PCM 数据。
       ByteBuffer outputBuffer = decodec.getOutputBuffer(outIndex);
-      // 只有缓冲区有效且这次确实有音频数据时，才写入 AudioTrack。
-      if (outputBuffer != null && bufferInfo.size > 0) {
+      // 只有缓冲区有效、这次确实有音频数据，并且当前连接是音频 owner 时，才写入 AudioTrack。
+      if (outputBuffer != null && bufferInfo.size > 0 && shouldPlay) {
         // 输出缓冲区可能带有偏移，先移动到有效数据起点。
         outputBuffer.position(bufferInfo.offset);
         // 只允许读取本次帧的有效长度，避免把无效尾部一起写进去。
         outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
-        // 阻塞写入并循环补完，避免部分写入导致 PCM 帧缺口。
+        // 阻塞写入并循环补完，避免部分写入导致 PCM 帧缺口；先写一点数据再 play，可减少启动瞬间 underrun。
         while (outputBuffer.hasRemaining()) {
           int writeSize = audioTrack.write(outputBuffer, outputBuffer.remaining(), AudioTrack.WRITE_BLOCKING);
           if (writeSize <= 0) break;
         }
+        // 确认缓冲里已经有 PCM 后再启动播放，避免 AudioTrack 空跑导致第一句播报被吃掉。
+        if (shouldPlay && audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) audioTrack.play();
       }
       // 当前输出缓冲区已经消费完毕，交还给解码器复用。
       decodec.releaseOutputBuffer(outIndex, false);
@@ -99,13 +106,15 @@ public class AudioDecode {
 
   public void playAudio(boolean play) {
     if (play) {
-      // 恢复播放前先清空积压，避免切回播放时把旧音频一起播出来。
-      audioTrack.flush();
-      // 开始播放，让后续写入的 PCM 立即进入硬件链路。
-      audioTrack.play();
+      // 只标记允许播放；真正 play 放到第一批 PCM 写入后，降低空缓冲 underrun 的概率。
+      shouldPlay = true;
     } else {
+      // 暂停时先阻止后续 PCM 写入，再清空旧缓冲，避免恢复后播放过期音频。
+      shouldPlay = false;
       // 暂停播放，但保留播放器对象，方便后续快速恢复。
       audioTrack.pause();
+      // 丢弃已经排队但还没播放的旧音频，尤其适合多投屏 owner 切换场景。
+      audioTrack.flush();
     }
   }
 
@@ -177,8 +186,10 @@ public class AudioDecode {
   private void setAudioTrack() {
     // 播放端同样使用 48kHz，避免解码后还要做额外重采样。
     int sampleRate = 48000;
-    // 在系统建议的最小缓冲基础上再放大一点，兼顾低延迟和稳定性。
-    int bufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT) * 2;
+    // 在系统建议的最小缓冲基础上再放大，优先解决车机端 AudioTrack underrun 导致的卡顿/吞字。
+    int minBufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+    if (minBufferSize <= 0) minBufferSize = getFallbackAudioTrackBufferSize(sampleRate);
+    int bufferSize = minBufferSize * AUDIO_TRACK_BUFFER_MULTIPLIER;
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
       // Android 6.0 及以上使用 Builder，便于精细控制播放属性。
       AudioTrack.Builder audioTrackBuild = new AudioTrack.Builder();
@@ -210,6 +221,11 @@ public class AudioDecode {
       // 老版本系统退回到传统构造方式，保持兼容性。
       audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
     }
+  }
+
+  private int getFallbackAudioTrackBufferSize(int sampleRate) {
+    // 兜底 200ms PCM：48kHz * 2 声道 * 16bit * 0.2s，避免 getMinBufferSize 异常时创建失败。
+    return sampleRate * 2 * 2 / 5;
   }
 
   // 创建音量增强器。
