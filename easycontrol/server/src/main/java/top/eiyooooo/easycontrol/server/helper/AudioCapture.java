@@ -20,6 +20,7 @@ import java.lang.reflect.Method;
  */
 public final class AudioCapture {
 
+    private static final int BUFFER_SIZE_MULTIPLIER = 4;
     // 采样率，48kHz 是目前比较常见且音质/性能平衡较好的配置。
     public static final int SAMPLE_RATE = 48000;
     // AudioFormat 需要的输入通道配置，这里使用立体声输入。
@@ -79,8 +80,8 @@ public final class AudioCapture {
         audioFormatBuilder.setSampleRate(SAMPLE_RATE);
         audioFormatBuilder.setChannelMask(CHANNEL_CONFIG);
         audioRecordBuilder.setAudioFormat(audioFormatBuilder.build());
-        // 缓冲区放大 16 倍，目的是提高稳定性，减少丢帧和读取抖动。
-        audioRecordBuilder.setBufferSizeInBytes(16 * AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, ENCODING));
+        // 缓冲区保留一定余量，但不要过大，避免系统混音读取链路积压太多旧音频。
+        audioRecordBuilder.setBufferSizeInBytes(BUFFER_SIZE_MULTIPLIER * AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, ENCODING));
         return audioRecordBuilder.build();
     }
 
@@ -139,9 +140,9 @@ public final class AudioCapture {
             mChannelMaskField.setAccessible(true);
             mChannelMaskField.set(audioRecord, CHANNEL_MASK);
 
-            // 先计算系统建议的最小缓冲，再额外放大一截，降低车机环境下的抖动风险。
+            // 先计算系统建议的最小缓冲，再保留适度余量，兼顾稳定和低延迟。
             int minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, ENCODING);
-            int bufferSizeInBytes = minBufferSize * 8;
+            int bufferSizeInBytes = minBufferSize * BUFFER_SIZE_MULTIPLIER;
 
             // 让内部校验函数确认缓冲区大小没问题。
             Method audioBuffSizeCheckMethod = AudioRecord.class.getDeclaredMethod("audioBuffSizeCheck", int.class);

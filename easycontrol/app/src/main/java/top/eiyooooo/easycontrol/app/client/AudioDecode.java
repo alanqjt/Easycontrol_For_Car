@@ -23,6 +23,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * 这里的缓冲区处理方式会直接影响导航播报是否会“吃字”或延迟。
  */
 public class AudioDecode {
+  private static final int MAX_PENDING_AUDIO_FRAMES = 8;
   // MediaCodec 解码器实例，负责把压缩音频转成 PCM。
   public MediaCodec decodec;
   // 最终把 PCM 写入系统音频输出的播放器对象。
@@ -49,8 +50,11 @@ public class AudioDecode {
         outputBuffer.position(bufferInfo.offset);
         // 只允许读取本次帧的有效长度，避免把无效尾部一起写进去。
         outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
-        // 阻塞写入，保证音频顺序稳定，尽量减少首字被吞或播放抖动。
-        audioTrack.write(outputBuffer, bufferInfo.size, AudioTrack.WRITE_BLOCKING);
+        // 阻塞写入并循环补完，避免部分写入导致 PCM 帧缺口。
+        while (outputBuffer.hasRemaining()) {
+          int writeSize = audioTrack.write(outputBuffer, outputBuffer.remaining(), AudioTrack.WRITE_BLOCKING);
+          if (writeSize <= 0) break;
+        }
       }
       // 当前输出缓冲区已经消费完毕，交还给解码器复用。
       decodec.releaseOutputBuffer(outIndex, false);
@@ -111,6 +115,9 @@ public class AudioDecode {
   private final LinkedBlockingQueue<Integer> intputBufferQueue = new LinkedBlockingQueue<>();
 
   public void decodeIn(byte[] data) {
+    while (intputDataQueue.size() >= MAX_PENDING_AUDIO_FRAMES) {
+      intputDataQueue.poll();
+    }
     // 收到一帧压缩音频后先入队，等有空闲输入缓冲区时再配对。
     intputDataQueue.offer(data);
     // 立即尝试喂给解码器，减少等待和排队延迟。

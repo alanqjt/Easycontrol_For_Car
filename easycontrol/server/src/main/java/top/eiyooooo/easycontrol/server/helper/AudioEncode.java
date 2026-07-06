@@ -26,6 +26,7 @@ public final class AudioEncode {
     private static AudioRecord audioCapture;
     // 是否使用 OPUS 编码，取决于用户配置和设备编码器能力。
     private static boolean useOpus;
+    private static long inputPresentationTimeUs;
 
     /**
      * 初始化音频子系统：
@@ -43,6 +44,7 @@ public final class AudioEncode {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) throw new Exception("audio not supported");
             // 创建并配置编码器。
             setAudioEncoder();
+            inputPresentationTimeUs = 0;
             // 启动编码器，让它开始接收 PCM 输入。
             encoder.start();
             // 初始化音频采集端。
@@ -85,8 +87,8 @@ public final class AudioEncode {
         encoder.configure(encoderFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
     }
 
-    // 按 50ms 切一帧，兼顾实时性和编码稳定性。
-    private static final int frameSize = AudioCapture.millisToBytes(50);
+    // 按 20ms 切一帧，降低导航播报从手机到车机的端到端延迟。
+    private static final int frameSize = AudioCapture.millisToBytes(20);
 
     /**
      * 从音频捕获缓冲区读取一帧 PCM 数据，并送入编码器输入缓冲区。
@@ -98,16 +100,29 @@ public final class AudioEncode {
             do inIndex = encoder.dequeueInputBuffer(-1); while (inIndex < 0);
             // 取出该输入缓冲区，准备写入 PCM。
             ByteBuffer buffer = encoder.getInputBuffer(inIndex);
-            if (buffer == null) return;
+            if (buffer == null) {
+                encoder.queueInputBuffer(inIndex, 0, 0, inputPresentationTimeUs, 0);
+                return;
+            }
+            buffer.clear();
             // 读取量不能超过缓冲区剩余空间，也不能超过我们定义的单帧大小。
             int size = Math.min(buffer.remaining(), frameSize);
             // 从采集端读取 PCM 到编码器输入缓冲区。
-            audioCapture.read(buffer, size);
+            int readSize = audioCapture.read(buffer, size);
+            if (readSize <= 0) {
+                encoder.queueInputBuffer(inIndex, 0, 0, inputPresentationTimeUs, 0);
+                return;
+            }
             // 把这一帧提交给编码器，后续由 encodeOut 取出编码结果。
-            encoder.queueInputBuffer(inIndex, 0, size, 0, 0);
+            encoder.queueInputBuffer(inIndex, 0, readSize, inputPresentationTimeUs, 0);
+            inputPresentationTimeUs += bytesToMicros(readSize);
         } catch (IllegalStateException e) {
             L.e("AudioEncode encodeIn error", e);
         }
+    }
+
+    private static long bytesToMicros(int bytes) {
+        return bytes * 1_000_000L / (AudioCapture.SAMPLE_RATE * AudioCapture.CHANNELS * AudioCapture.BYTES_PER_SAMPLE);
     }
 
     private static final MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
