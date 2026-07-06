@@ -35,6 +35,9 @@ public class Client {
   private int status = 0;
   // 当前进程里所有 Client 实例的集合，用于管理多连接场景。
   public static final ArrayList<Client> allClient = new ArrayList<>();
+  // 车机端只保留一个真正播放的音频 owner，避免多投屏时多路 AudioTrack 混在一起。
+  private static Client audioOwner;
+  private static final Object audioOwnerLock = new Object();
 
   // 连接相关对象。
   public Adb adb;
@@ -69,9 +72,11 @@ public class Client {
   private static final boolean supportOpus = PublicTools.isDecoderSupport("opus");
 
   public Client(Device device, UsbDevice usbDevice, int mode) {
+    // 初始化设备标识，后续多连接判断要优先使用它。
+    uuid = device.uuid;
     // 如果当前设备已经有一个 Client 在跑，多连接时需要重新标记主从关系。
     for (Client client : allClient) {
-      if (client.uuid.equals(device.uuid)) {
+      if (client.isSamePhysicalDevice(device)) {
         if (client.multiLink == 0) client.changeMultiLinkMode(1);
         this.multiLink = 2;
         break;
@@ -79,8 +84,6 @@ public class Client {
     }
     allClient.add(this);
     if (!EventMonitor.monitorRunning && AppData.setting.getMonitorState()) EventMonitor.startMonitor();
-    // 初始化设备标识。
-    uuid = device.uuid;
     // 如果指定了转移模式，就先标记为已转移。
     if (mode == 0) specifiedTransferred = true;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -168,7 +171,7 @@ public class Client {
             + (AppData.setting.getTurnOnScreenIfStop() ? 1 : 0);
     StringBuilder cmd = new StringBuilder();
     cmd.append("app_process -Djava.class.path=").append(serverName).append(" / top.eiyooooo.easycontrol.server.Scrcpy");
-    if (!device.isAudio) cmd.append(" isAudio=0");
+    if (!shouldStartServerAudio(device)) cmd.append(" isAudio=0");
     if (device.maxSize != 1600) cmd.append(" maxSize=").append(device.maxSize);
     if (device.maxFps != 60) cmd.append(" maxFps=").append(device.maxFps);
     if (device.maxVideoBit != 4) cmd.append(" maxVideoBit=").append(device.maxVideoBit);
@@ -331,10 +334,11 @@ public class Client {
         switch (bufferStream.readByte()) {
           case AUDIO_EVENT:
             byte[] audioFrame = controlPacket.readFrame(bufferStream);
+            if (!canPlayAudio()) break;
             if (audioDecode != null) audioDecode.decodeIn(audioFrame);
             else {
               audioDecode = new AudioDecode(useOpus, audioFrame, handler);
-              if (multiLink != 2) playAudio(true);
+              playAudio(true);
             }
             break;
           case CLIPBOARD_EVENT:
@@ -376,6 +380,7 @@ public class Client {
   public void release(String error) {
     if (status == -1) return;
     status = -1;
+    releaseAudioOwner();
     allClient.remove(this);
     if (error != null) {
       PublicTools.logToast(error);
@@ -535,6 +540,50 @@ public class Client {
   }
 
   public void playAudio(boolean play) {
-    if (audioDecode != null) audioDecode.playAudio(play);
+    if (audioDecode == null) return;
+    if (play && !canPlayAudio()) return;
+    synchronized (audioOwnerLock) {
+      if (play) requestAudioOwnerLocked();
+      else {
+        if (audioOwner == this) audioOwner = null;
+        audioDecode.playAudio(false);
+      }
+    }
+  }
+
+  private boolean canPlayAudio() {
+    return multiLink == 0 || multiLink == 1;
+  }
+
+  private boolean shouldStartServerAudio(Device device) {
+    return device.isAudio && canPlayAudio();
+  }
+
+  private boolean isSamePhysicalDevice(Device device) {
+    if (device.uuid.equals(uuid)) return true;
+    if (clientView == null || clientView.deviceOriginal == null) return false;
+    Device oldDevice = clientView.deviceOriginal;
+    if (!oldDevice.isNormalDevice() || !device.isNormalDevice()) return false;
+    if (oldDevice.address == null || device.address == null) return false;
+    return !oldDevice.address.isEmpty() && oldDevice.address.equals(device.address);
+  }
+
+  private void requestAudioOwnerLocked() {
+    if (audioOwner != null && audioOwner != this && audioOwner.audioDecode != null) audioOwner.audioDecode.playAudio(false);
+    audioOwner = this;
+    audioDecode.playAudio(true);
+  }
+
+  private void releaseAudioOwner() {
+    synchronized (audioOwnerLock) {
+      if (audioOwner != this) return;
+      audioOwner = null;
+      for (Client client : allClient) {
+        if (client != this && !client.isClosed() && client.canPlayAudio() && client.audioDecode != null) {
+          client.requestAudioOwnerLocked();
+          break;
+        }
+      }
+    }
   }
 }
