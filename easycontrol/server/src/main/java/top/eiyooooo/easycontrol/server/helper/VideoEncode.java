@@ -63,6 +63,9 @@ public final class VideoEncode {
         // 选择 H.264 或 H.265。
         String codecMime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
         encoder = MediaCodec.createEncoderByType(codecMime);
+        boolean hardwareAccelerated = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && encoder.getCodecInfo().isHardwareAccelerated();
+        boolean softwareOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && encoder.getCodecInfo().isSoftwareOnly();
+        L.i("video encoder=" + encoder.getName() + ", mime=" + codecMime + ", hw=" + hardwareAccelerated + ", sw=" + softwareOnly);
         encoderFormat = new MediaFormat();
 
         // 基础编码属性。

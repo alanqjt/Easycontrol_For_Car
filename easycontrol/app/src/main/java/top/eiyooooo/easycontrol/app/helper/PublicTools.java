@@ -299,6 +299,9 @@ public class PublicTools {
       if (setDefault) AppData.setting.setDefaultMaxVideoBit(Integer.parseInt(str));
       else device.maxVideoBit = Integer.parseInt(str);
     }).getRoot());
+    if (setDefault) {
+      fatherLayout.addView(createSwitchCard(context, context.getString(R.string.set_display_allow_frame_drop), context.getString(R.string.set_display_allow_frame_drop_detail), AppData.setting.getAllowVideoFrameDrop(), isChecked -> AppData.setting.setAllowVideoFrameDrop(isChecked)).getRoot());
+    }
     if (device != null) {
       if (device.isNormalDevice())
         fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_startup_device), context.getString(R.string.option_startup_device_detail), device.connectOnStart, isChecked -> device.connectOnStart = isChecked).getRoot());

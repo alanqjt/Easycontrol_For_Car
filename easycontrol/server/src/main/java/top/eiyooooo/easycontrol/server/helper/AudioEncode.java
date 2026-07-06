@@ -74,6 +74,9 @@ public final class AudioEncode {
         String codecMime = useOpus ? MediaFormat.MIMETYPE_AUDIO_OPUS : MediaFormat.MIMETYPE_AUDIO_AAC;
         // 创建指定类型的编码器实例。
         encoder = MediaCodec.createEncoderByType(codecMime);
+        boolean hardwareAccelerated = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && encoder.getCodecInfo().isHardwareAccelerated();
+        boolean softwareOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && encoder.getCodecInfo().isSoftwareOnly();
+        L.i("audio encoder=" + encoder.getName() + ", mime=" + codecMime + ", hw=" + hardwareAccelerated + ", sw=" + softwareOnly);
         // 使用和采集端一致的参数创建输入格式。
         MediaFormat encoderFormat = MediaFormat.createAudioFormat(codecMime, AudioCapture.SAMPLE_RATE, AudioCapture.CHANNELS);
         // 设定目标比特率，保证语音清晰度和带宽之间的平衡。

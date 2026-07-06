@@ -9,6 +9,8 @@ import android.view.Surface;
 
 import androidx.annotation.NonNull;
 
+import top.eiyooooo.easycontrol.app.entity.AppData;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -32,8 +34,13 @@ public class VideoDecode {
 
     @Override
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
-      // 投屏更需要低延迟，输出帧直接立即渲染，避免按旧时间戳排队等待。
-      mediaCodec.releaseOutputBuffer(outIndex, true);
+      if (AppData.setting.getAllowVideoFrameDrop()) {
+        // 低延迟模式直接显示最新解码帧，配合输入侧丢弃旧帧。
+        mediaCodec.releaseOutputBuffer(outIndex, true);
+      } else {
+        // 完整模式保持原始时间戳节奏，避免滑动/动画中间态被跳过。
+        mediaCodec.releaseOutputBuffer(outIndex, bufferInfo.presentationTimeUs);
+      }
     }
 
     @Override
@@ -63,8 +70,10 @@ public class VideoDecode {
   private final LinkedBlockingQueue<Integer> intputBufferQueue = new LinkedBlockingQueue<>();
 
   public void decodeIn(byte[] data, long pts) {
-    while (intputDataQueue.size() >= MAX_PENDING_VIDEO_FRAMES) {
-      intputDataQueue.poll();
+    if (AppData.setting.getAllowVideoFrameDrop()) {
+      while (intputDataQueue.size() >= MAX_PENDING_VIDEO_FRAMES) {
+        intputDataQueue.poll();
+      }
     }
     // 视频帧会带时间戳，保证播放顺序和同步。
     intputDataQueue.offer(new Pair<>(data, pts));

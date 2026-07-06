@@ -52,6 +52,8 @@
   <string name="set_display_full_to_mini_on_exit_detail">在全屏模式下意外退出时自动最小化(关闭时为自动小窗)</string>
   <string name="set_display_full_fill">全屏模式拉伸填充画面</string>
   <string name="set_display_full_fill_detail">在全屏模式下画面拉伸并填充所有可用区域(注：比例相差过大时不拉伸)</string>
+  <string name="set_display_allow_frame_drop">允许视频丢帧</string>
+  <string name="set_display_allow_frame_drop_detail">开启后会丢弃积压旧帧以降低延迟，关闭后按原始顺序显示画面</string>
   <string name="set_other">其他</string>
   <string name="set_audio_channel">音频输出声道</string>
   <string name="set_audio_channel_detail">没有特殊需要请保持0声道</string>

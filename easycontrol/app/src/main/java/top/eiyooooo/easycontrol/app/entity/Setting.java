@@ -209,6 +209,15 @@ public final class Setting {
     editor.apply();
   }
 
+  public boolean getAllowVideoFrameDrop() {
+    return sharedPreferences.getBoolean("allowVideoFrameDrop", false);
+  }
+
+  public void setAllowVideoFrameDrop(boolean value) {
+    editor.putBoolean("allowVideoFrameDrop", value);
+    editor.apply();
+  }
+
   public boolean getNewMirrorMode() {
     return sharedPreferences.getBoolean("newMirrorMode", true);
   }
