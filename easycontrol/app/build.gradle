@@ -90,7 +90,9 @@ afterEvaluate {
       "process${variantName}Resources"
     ].each { taskName ->
       tasks.matching { it.name == taskName }.configureEach {
-        dependsOn serverJarTask
+        // Ensure both server copy tasks are declared as dependencies to avoid implicit dependency issues
+        dependsOn ':server:copyDebug'
+        dependsOn ':server:copyRelease'
       }
     }
   }
