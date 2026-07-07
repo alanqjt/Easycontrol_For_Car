@@ -46,12 +46,14 @@ android {
     debug {
       buildConfigField "boolean", "ENABLE_DEBUG_FEATURE", "true"
       debuggable true
+      signingConfig signingConfigs.debug
     }
     release {
       buildConfigField "boolean", "ENABLE_DEBUG_FEATURE", "false"
       debuggable false
       minifyEnabled true
       shrinkResources true
+      signingConfig signingConfigs.release
       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
     }
   }
