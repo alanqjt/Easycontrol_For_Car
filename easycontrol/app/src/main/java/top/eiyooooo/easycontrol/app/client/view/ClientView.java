@@ -21,6 +21,7 @@ import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.client.ControlPacket;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
+import top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -174,8 +175,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
    */
   public int viewMode;
   public boolean needResumeToSmall = false;
+  private int vehicleHiddenViewMode = 0;
 
   public synchronized void changeToFull() {
+    if (holdForVehicleView(3)) return;
     hide(false);
     Intent intent = new Intent(AppData.activity, FullActivity.class);
     int i = 0;
@@ -189,6 +192,7 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   }
 
   public synchronized void changeToSmall() {
+    if (holdForVehicleView(2)) return;
     needResumeToSmall = false;
     if (smallView == null) return;
     hide(false);
@@ -197,6 +201,7 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   }
 
   public synchronized void changeToMini(int mode) {
+    if (holdForVehicleView(1)) return;
     if (miniView == null) return;
     hide(false);
     miniView.show(mode);
@@ -208,6 +213,32 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     if (smallView != null) smallView.hide();
     if (miniView != null) miniView.hide();
     if (isRelease && surfaceTexture != null) surfaceTexture.release();
+  }
+
+  public synchronized void hideForVehicleView() {
+    if (vehicleHiddenViewMode != 0 || viewMode == 0) return;
+    vehicleHiddenViewMode = viewMode;
+    hide(false);
+  }
+
+  public synchronized void restoreAfterVehicleView() {
+    int targetViewMode = vehicleHiddenViewMode;
+    vehicleHiddenViewMode = 0;
+    if (targetViewMode == 1) changeToMini(0);
+    else if (targetViewMode == 2) changeToSmall();
+    else if (targetViewMode == 3) changeToFull();
+  }
+
+  private boolean holdForVehicleView(int targetViewMode) {
+    try {
+      if (!BydPanoramaMonitor.isVehicleViewActive()) return false;
+    } catch (Throwable ignored) {
+      return false;
+    }
+    vehicleHiddenViewMode = targetViewMode;
+    viewMode = targetViewMode;
+    hide(false);
+    return true;
   }
 
   public void setFullView(FullActivity fullView) {

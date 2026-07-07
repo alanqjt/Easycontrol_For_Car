@@ -22,3 +22,7 @@
 -dontwarn org.bouncycastle.**
 -keep class org.bouncycastle.jcajce.provider.** { *; }
 -keep class org.bouncycastle.jce.provider.** { *; }
+
+-dontwarn android.hardware.bydauto.**
+-dontwarn android.hardware.IBYDAuto**
+-keep class top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor { *; }

@@ -7,9 +7,11 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.LayoutInflater;
 
 import java.util.UUID;
@@ -21,11 +23,22 @@ import top.eiyooooo.easycontrol.app.databinding.ActivityMainBinding;
 import top.eiyooooo.easycontrol.app.databinding.ItemRequestPermissionBinding;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
+import top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor;
 import top.eiyooooo.easycontrol.app.helper.DeviceListAdapter;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
 import top.eiyooooo.easycontrol.app.helper.ConnectHelper;
 
 public class MainActivity extends Activity {
+  private static final String TAG = "MainActivity";
+  private static final String BYD_PANORAMA_CLASS = "android.hardware.bydauto.panorama.BYDAutoPanoramaDevice";
+  private static final String BYD_PANORAMA_COMMON_PERMISSION = "android.permission.BYDAUTO_PANORAMA_COMMON";
+  private static final String BYD_PANORAMA_GET_PERMISSION = "android.permission.BYDAUTO_PANORAMA_GET";
+  private static final String[] BYD_PANORAMA_PERMISSIONS = new String[]{
+      BYD_PANORAMA_COMMON_PERMISSION,
+      BYD_PANORAMA_GET_PERMISSION
+  };
+  private static final int REQUEST_BYD_PANORAMA_PERMISSION = 13901;
+
   // 设备列表
   private DeviceListAdapter deviceListAdapter;
   private ConnectHelper connectHelper;
@@ -48,6 +61,7 @@ public class MainActivity extends Activity {
   }
 
   private void startApp() {
+    startBydPanoramaMonitorWithPermission();
     // 设置设备列表适配器、广播接收器
     deviceListAdapter = new DeviceListAdapter(this, mainActivity.devicesList);
     mainActivity.devicesList.setAdapter(deviceListAdapter);
@@ -157,5 +171,48 @@ public class MainActivity extends Activity {
     mainActivity.buttonPair.setOnClickListener(v -> startActivity(new Intent(this, PairActivity.class)));
     mainActivity.buttonAdd.setOnClickListener(v -> PublicTools.createAddDeviceView(this, Device.getDefaultDevice(UUID.randomUUID().toString(), Device.TYPE_NORMAL), deviceListAdapter).show());
     mainActivity.buttonSet.setOnClickListener(v -> startActivity(new Intent(this, SetActivity.class)));
+  }
+
+  // BYD 全景影像类在非比亚迪系统上不存在，先探测再申请权限，避免普通设备调试时反复弹无效权限。
+  private void startBydPanoramaMonitorWithPermission() {
+    if (!isBydPanoramaApiAvailable()) return;
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || haveBydPanoramaPermissions()) {
+      startBydPanoramaMonitorSafely();
+      return;
+    }
+    requestPermissions(BYD_PANORAMA_PERMISSIONS, REQUEST_BYD_PANORAMA_PERMISSION);
+  }
+
+  private boolean isBydPanoramaApiAvailable() {
+    try {
+      Class.forName(BYD_PANORAMA_CLASS);
+      return true;
+    } catch (Throwable ignored) {
+      return false;
+    }
+  }
+
+  private boolean haveBydPanoramaPermissions() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+    for (String permission : BYD_PANORAMA_PERMISSIONS) {
+      if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) return false;
+    }
+    return true;
+  }
+
+  private void startBydPanoramaMonitorSafely() {
+    try {
+      BydPanoramaMonitor.start(this);
+    } catch (Throwable throwable) {
+      Log.w(TAG, "BYD panorama monitor start failed", throwable);
+    }
+  }
+
+  @Override
+  public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    if (requestCode != REQUEST_BYD_PANORAMA_PERMISSION) return;
+    if (haveBydPanoramaPermissions()) startBydPanoramaMonitorSafely();
+    else Log.w(TAG, "BYD panorama permission denied");
   }
 }

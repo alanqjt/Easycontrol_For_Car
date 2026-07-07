@@ -7,6 +7,7 @@ import android.widget.Toast;
 import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
+import top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor;
 import top.eiyooooo.easycontrol.app.helper.DeviceListAdapter;
 /**
  * 类 StartDeviceActivity
@@ -18,6 +19,10 @@ public class StartDeviceActivity extends Activity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         AppData.init(this);
+        try {
+            BydPanoramaMonitor.start(this);
+        } catch (Throwable ignored) {
+        }
         startDevice();
         finish();
     }
