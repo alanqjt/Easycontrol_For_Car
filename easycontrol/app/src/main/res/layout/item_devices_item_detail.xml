@@ -5,123 +5,140 @@
   android:layout_width="match_parent"
   android:layout_height="wrap_content"
   android:background="@drawable/background_cron"
+  android:elevation="2dp"
   android:gravity="center"
   android:orientation="vertical"
-  android:paddingStart="12dp"
-  android:paddingTop="3dp"
-  android:paddingEnd="12dp"
-  android:paddingBottom="3dp">
+  android:paddingStart="@dimen/cardPadding"
+  android:paddingTop="14dp"
+  android:paddingEnd="@dimen/cardPadding"
+  android:paddingBottom="16dp">
 
-  <GridLayout
+  <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:columnCount="3"
-    android:padding="3dp">
+    android:baselineAligned="false"
+    android:gravity="center"
+    android:orientation="horizontal">
 
     <LinearLayout
-      android:layout_columnWeight="9"
       android:layout_width="0dp"
-      android:layout_height="40dp"
-      android:gravity="center_vertical"
-      android:background="@drawable/background_cron_stroke"
-      android:backgroundTint="@color/button" >
+      android:layout_height="92dp"
+      android:layout_weight="1"
+      android:background="@drawable/option_card_background"
+      android:gravity="center"
+      android:orientation="vertical"
+      android:paddingStart="10dp"
+      android:paddingTop="10dp"
+      android:paddingEnd="10dp"
+      android:paddingBottom="8dp">
 
-      <FrameLayout
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1" >
-        <TextView
-          android:layout_width="wrap_content"
-          android:layout_height="wrap_content"
-          android:layout_marginStart="10dp"
-          android:text="@string/option_is_audio"
-          android:textColor="@color/onCardBackground"
-          android:textSize="@dimen/smallFont"
-          tools:ignore="HardcodedText" />
-
-      </FrameLayout>
+      <TextView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="2"
+        android:text="@string/option_is_audio"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/smallFont"
+        tools:ignore="HardcodedText" />
 
       <Switch
         android:id="@+id/is_audio"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="5dp"
-        android:thumbTint="@color/button"
-        android:thumbTintMode="multiply"
-        android:trackTint="@color/button"
-        android:trackTintMode="multiply"
+        android:thumbTint="@color/switch_thumb"
+        android:trackTint="@color/switch_track"
         tools:ignore="UseSwitchCompatOrMaterialXml" />
-
     </LinearLayout>
 
-    <Space android:layout_columnWeight="1" />
+    <Space
+      android:layout_width="12dp"
+      android:layout_height="1dp" />
 
     <LinearLayout
-      android:layout_columnWeight="9"
       android:layout_width="0dp"
-      android:layout_height="40dp"
-      android:gravity="center_vertical"
-      android:background="@drawable/background_cron_stroke"
-      android:backgroundTint="@color/button" >
+      android:layout_height="92dp"
+      android:layout_weight="1"
+      android:background="@drawable/option_card_background"
+      android:gravity="center"
+      android:orientation="vertical"
+      android:paddingStart="10dp"
+      android:paddingTop="10dp"
+      android:paddingEnd="10dp"
+      android:paddingBottom="8dp">
 
-      <FrameLayout
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1" >
-        <TextView
-          android:layout_width="wrap_content"
-          android:layout_height="wrap_content"
-          android:layout_marginStart="10dp"
-          android:text="@string/option_default_full"
-          android:textColor="@color/onCardBackground"
-          android:textSize="@dimen/smallFont"
-          tools:ignore="HardcodedText" />
-
-      </FrameLayout>
+      <TextView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="2"
+        android:text="@string/option_default_full"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/smallFont"
+        tools:ignore="HardcodedText" />
 
       <Switch
         android:id="@+id/default_full"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="5dp"
-        android:thumbTint="@color/button"
-        android:thumbTintMode="multiply"
-        android:trackTint="@color/button"
-        android:trackTintMode="multiply"
+        android:thumbTint="@color/switch_thumb"
+        android:trackTint="@color/switch_track"
         tools:ignore="UseSwitchCompatOrMaterialXml" />
-
     </LinearLayout>
 
-    <Space
-      android:layout_height="4dp"
-      android:layout_columnSpan="3" />
+  </LinearLayout>
+
+  <Space
+    android:layout_width="1dp"
+    android:layout_height="12dp" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:baselineAligned="false"
+    android:gravity="center"
+    android:orientation="horizontal">
 
     <Button
       android:id="@+id/display_mirroring"
-      android:layout_width="wrap_content"
-      android:layout_height="40dp"
-      android:layout_columnWeight="9"
-      android:background="@drawable/background_cron_stroke"
-      android:backgroundTint="@color/alert"
+      android:layout_width="0dp"
+      android:layout_height="92dp"
+      android:layout_weight="1"
+      android:background="@drawable/button_primary"
+      android:fontFamily="sans-serif-medium"
       android:gravity="center"
+      android:paddingStart="8dp"
+      android:paddingEnd="8dp"
       android:text="@string/start_display_mirroring"
-      android:textColor="@color/button"
+      android:textAllCaps="false"
+      android:textColor="@color/onButton"
       android:textSize="@dimen/smallFont" />
 
-    <Space android:layout_columnWeight="1" />
+    <Space
+      android:layout_width="12dp"
+      android:layout_height="1dp" />
 
-      <Button
-        android:id="@+id/create_display"
-        android:layout_width="wrap_content"
-        android:layout_height="40dp"
-        android:layout_columnWeight="9"
-        android:background="@drawable/background_cron_stroke"
-        android:backgroundTint="@color/alert"
-        android:gravity="center"
-        android:text="@string/start_application_transfer"
-        android:textColor="@color/button"
-        android:textSize="@dimen/smallFont" />
+    <Button
+      android:id="@+id/create_display"
+      android:layout_width="0dp"
+      android:layout_height="92dp"
+      android:layout_weight="1"
+      android:background="@drawable/button_secondary"
+      android:fontFamily="sans-serif-medium"
+      android:gravity="center"
+      android:paddingStart="8dp"
+      android:paddingEnd="8dp"
+      android:text="@string/start_application_transfer"
+      android:textAllCaps="false"
+      android:textColor="@color/onButtonSecond"
+      android:textSize="@dimen/smallFont" />
 
-    </GridLayout>
+  </LinearLayout>
 
 </LinearLayout>

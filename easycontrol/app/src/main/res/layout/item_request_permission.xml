@@ -4,7 +4,6 @@
   android:layout_height="wrap_content"
   android:layout_margin="15dp"
   android:background="@drawable/background_cron"
-  android:backgroundTint="@color/alert"
   android:elevation="8dp"
   android:gravity="center"
   android:orientation="vertical"
@@ -39,11 +38,11 @@
       android:layout_width="0dp"
       android:layout_height="wrap_content"
       android:layout_columnWeight="9"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/button"
+      android:background="@drawable/button_primary"
       android:gravity="center"
       android:text="@string/main_float_permission_button"
       android:textColor="@color/onButton"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
     <Space android:layout_columnWeight="1" />
@@ -53,11 +52,11 @@
       android:layout_width="0dp"
       android:layout_height="wrap_content"
       android:layout_columnWeight="9"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/button"
+      android:background="@drawable/button_secondary"
       android:gravity="center"
       android:text="@string/main_no_float_mode_button"
-      android:textColor="@color/onButton"
+      android:textColor="@color/onButtonSecond"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
   </GridLayout>

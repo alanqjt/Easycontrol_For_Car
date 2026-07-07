@@ -26,6 +26,8 @@
   <string name="pair_failed">失败</string>
 
   <!-- 设置页面 -->
+  <string name="set_title">设置</string>
+  <string name="set_title_detail">把投屏体验调到更顺手</string>
   <string name="set_default">默认参数</string>
   <string name="set_display">显示</string>
   <string name="set_wake_up_screen_on_connect">连接后自动唤醒</string>

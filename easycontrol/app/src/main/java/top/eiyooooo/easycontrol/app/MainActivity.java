@@ -8,6 +8,7 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -63,8 +64,7 @@ public class MainActivity extends Activity {
   private void startApp() {
     startBydPanoramaMonitorWithPermission();
     // 设置设备列表适配器、广播接收器
-    deviceListAdapter = new DeviceListAdapter(this, mainActivity.devicesList);
-    mainActivity.devicesList.setAdapter(deviceListAdapter);
+    deviceListAdapter = new DeviceListAdapter(this, mainActivity.devicesGrid);
     AppData.myBroadcastReceiver.setDeviceListAdapter(deviceListAdapter);
     connectHelper = new ConnectHelper(this);
     AppData.myBroadcastReceiver.setConnectHelper(connectHelper);
@@ -117,6 +117,16 @@ public class MainActivity extends Activity {
       }
     }
     super.onResume();
+  }
+
+  @Override
+  public void onConfigurationChanged(Configuration newConfig) {
+    super.onConfigurationChanged(newConfig);
+    refreshDeviceListForOrientation();
+  }
+
+  private void refreshDeviceListForOrientation() {
+    if (deviceListAdapter != null) deviceListAdapter.render();
   }
 
   // 检查权限

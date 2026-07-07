@@ -1,23 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <!-- 主界面色彩 -->
-  <color name="background">#222325</color>
-  <color name="onBackground">#DEDEDE</color>
-  <color name="onBackgroundSecond">#A7A7A7</color>
-  <color name="cardBackground">#3D3D3D</color>
-  <color name="onCardBackground">#FFFFFF</color>
-  <color name="onCardBackgroundSecond">#8B8B8B</color>
-  <color name="onCardDivider">#80FFFFFF</color>
+  <color name="background">#101820</color>
+  <color name="onBackground">#F2F6FA</color>
+  <color name="onBackgroundSecond">#A8B4BE</color>
+  <color name="cardBackground">#1B2730</color>
+  <color name="onCardBackground">#F5F8FA</color>
+  <color name="onCardBackgroundSecond">#9AA8B4</color>
+  <color name="onCardDivider">#2EFFFFFF</color>
+  <color name="surfaceMuted">#24323E</color>
+  <color name="surfacePressed">#173251</color>
 
   <!-- 特殊色彩 -->
-  <color name="button">#FFFFFF</color>
-  <color name="onButton">#414141</color>
-  <color name="alert">#ca5357</color>
-  <color name="onAlert">#ded8d8</color>
+  <color name="button">#42A3FF</color>
+  <color name="onButton">#06121D</color>
+  <color name="buttonSecond">#1B3B5D</color>
+  <color name="onButtonSecond">#B9DCFF</color>
+  <color name="alert">#FF6B72</color>
+  <color name="onAlert">#FFFFFF</color>
+  <color name="accentSoft">#1B3B5D</color>
   <color name="translucent">#000000ff</color>
 
   <!-- 客户端界面色彩 -->
-  <color name="clientBar">#579CF9</color>
+  <color name="clientBar">#42A3FF</color>
   <color name="clientBarSecond">#c07e7e7e</color>
 
   <!-- 迷你客户端界面色彩 -->

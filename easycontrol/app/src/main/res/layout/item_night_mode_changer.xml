@@ -43,11 +43,11 @@
         android:layout_columnWeight="9"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="@drawable/background_cron"
-        android:backgroundTint="@color/button"
+        android:background="@drawable/button_primary"
         android:gravity="center"
         android:text="@string/night_mode_auto"
         android:textColor="@color/onButton"
+        android:textAllCaps="false"
         android:textSize="@dimen/smallFont" />
 
       <Space android:layout_columnWeight="1" />
@@ -57,11 +57,11 @@
         android:layout_columnWeight="9"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="@drawable/background_cron"
-        android:backgroundTint="@color/button"
+        android:background="@drawable/button_secondary"
         android:gravity="center"
         android:text="@string/night_mode_custom"
-        android:textColor="@color/onButton"
+        android:textColor="@color/onButtonSecond"
+        android:textAllCaps="false"
         android:textSize="@dimen/smallFont" />
 
       <Space
@@ -73,11 +73,11 @@
         android:layout_columnWeight="9"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="@drawable/background_cron"
-        android:backgroundTint="@color/button"
+        android:background="@drawable/button_primary"
         android:gravity="center"
         android:text="@string/night_mode_yes"
         android:textColor="@color/onButton"
+        android:textAllCaps="false"
         android:textSize="@dimen/smallFont" />
 
       <Space android:layout_columnWeight="1" />
@@ -87,11 +87,11 @@
         android:layout_columnWeight="9"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="@drawable/background_cron"
-        android:backgroundTint="@color/button"
+        android:background="@drawable/button_secondary"
         android:gravity="center"
         android:text="@string/night_mode_no"
-        android:textColor="@color/onButton"
+        android:textColor="@color/onButtonSecond"
+        android:textAllCaps="false"
         android:textSize="@dimen/smallFont" />
 
     </GridLayout>

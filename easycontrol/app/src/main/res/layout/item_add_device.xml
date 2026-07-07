@@ -51,13 +51,13 @@
       android:id="@+id/scan_address"
       android:layout_width="wrap_content"
       android:layout_height="wrap_content"
-      android:layout_columnWeight="1"
-      android:layout_gravity="end"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/button"
+    android:layout_columnWeight="1"
+    android:layout_gravity="end"
+      android:background="@drawable/button_secondary"
       android:gravity="center"
       android:text="@string/add_device_scan"
-      android:textColor="@color/onButton"
+      android:textColor="@color/onButtonSecond"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
   </GridLayout>
@@ -93,11 +93,11 @@
         android:layout_height="wrap_content"
         android:layout_columnWeight="1"
         android:layout_gravity="end"
-        android:background="@drawable/background_cron"
-        android:backgroundTint="@color/button"
+        android:background="@drawable/button_secondary"
         android:gravity="center"
         android:text="@string/add_device_scan"
-        android:textColor="@color/onButton"
+        android:textColor="@color/onButtonSecond"
+        android:textAllCaps="false"
         android:textSize="@dimen/smallFont" />
 
   </GridLayout>
@@ -126,11 +126,11 @@
     android:layout_height="wrap_content"
     android:layout_gravity="center_horizontal"
     android:layout_marginTop="10dp"
-    android:background="@drawable/background_cron"
-    android:backgroundTint="@color/button"
+    android:background="@drawable/button_primary"
     android:gravity="center"
     android:text="@string/add_device_button"
     android:textColor="@color/onButton"
+    android:textAllCaps="false"
     android:textSize="@dimen/smallFont" />
 
 </LinearLayout>

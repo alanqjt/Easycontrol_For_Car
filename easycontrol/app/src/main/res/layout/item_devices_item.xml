@@ -5,19 +5,23 @@
   android:layout_width="match_parent"
   android:layout_height="wrap_content"
   android:background="@drawable/background_cron"
+  android:elevation="3dp"
   android:gravity="center"
+  android:minHeight="70dp"
   android:orientation="horizontal"
-  android:paddingStart="12dp"
-  android:paddingTop="10dp"
-  android:paddingEnd="12dp"
-  android:paddingBottom="10dp">
+  android:paddingStart="@dimen/cardPadding"
+  android:paddingTop="14dp"
+  android:paddingEnd="@dimen/cardPadding"
+  android:paddingBottom="14dp">
 
   <ImageView
     android:id="@+id/device_icon"
-    android:layout_width="26dp"
-    android:layout_height="26dp"
+    android:layout_width="34dp"
+    android:layout_height="34dp"
+    android:background="@drawable/option_card_background"
+    android:padding="6dp"
     android:src="@drawable/wifi_checking_connection"
-    android:tint="@color/onCardBackground" />
+    android:tint="@color/button" />
 
   <TextView
     android:id="@+id/device_name"
@@ -26,6 +30,7 @@
     android:layout_marginStart="12dp"
     android:layout_marginEnd="10dp"
     android:layout_weight="1"
+    android:fontFamily="sans-serif-medium"
     android:includeFontPadding="false"
     android:maxLines="1"
     android:text="设备1"
@@ -35,10 +40,12 @@
 
   <ImageView
     android:id="@+id/device_expand"
-    android:layout_width="24dp"
-    android:layout_height="24dp"
+    android:layout_width="34dp"
+    android:layout_height="34dp"
+    android:background="@drawable/toolbar_icon_background"
+    android:padding="7dp"
     android:rotation="180"
     android:src="@drawable/chevron_left"
-    android:tint="@color/onCardBackground" />
+    android:tint="@color/onBackgroundSecond" />
 
 </LinearLayout>

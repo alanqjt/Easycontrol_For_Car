@@ -13,6 +13,8 @@
     android:layout_marginTop="25dp"
     android:layout_marginEnd="25dp"
     android:layout_marginBottom="15dp"
+    android:fontFamily="sans-serif-medium"
+    android:includeFontPadding="false"
     android:text="@string/set_device_title"
     android:textColor="@color/onCardBackground"
     android:textSize="@dimen/middleFont" />
@@ -30,11 +32,11 @@
     <Button
       android:id="@+id/button_change"
       android:layout_columnWeight="9"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/alert"
+      android:background="@drawable/button_secondary"
       android:gravity="center"
       android:text="@string/set_device_button_change"
-      android:textColor="@color/onAlert"
+      android:textColor="@color/onButtonSecond"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
     <Space android:layout_columnWeight="1" />
@@ -42,11 +44,11 @@
     <Button
       android:id="@+id/button_delete"
       android:layout_columnWeight="9"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/alert"
+      android:background="@drawable/button_danger"
       android:gravity="center"
       android:text="@string/set_device_button_delete"
       android:textColor="@color/onAlert"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
     <Space
@@ -56,11 +58,11 @@
     <Button
       android:id="@+id/button_night_mode"
       android:layout_columnWeight="9"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/button"
+      android:background="@drawable/button_primary"
       android:gravity="center"
       android:text="@string/set_device_button_night_mode"
       android:textColor="@color/onButton"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
     <Space android:layout_columnWeight="1" />
@@ -68,11 +70,11 @@
     <Button
       android:id="@+id/button_get_uuid"
       android:layout_columnWeight="9"
-      android:background="@drawable/background_cron"
-      android:backgroundTint="@color/button"
+      android:background="@drawable/button_secondary"
       android:gravity="center"
       android:text="@string/set_device_button_get_uuid"
-      android:textColor="@color/onButton"
+      android:textColor="@color/onButtonSecond"
+      android:textAllCaps="false"
       android:textSize="@dimen/smallFont" />
 
   </GridLayout>
@@ -81,11 +83,11 @@
     android:id="@+id/button_create_shortcut"
     android:layout_height="wrap_content"
     android:layout_width="match_parent"
-    android:background="@drawable/background_cron"
-    android:backgroundTint="@color/button"
+    android:background="@drawable/button_primary"
     android:gravity="center"
     android:text="@string/set_device_button_create_shortcut"
     android:textColor="@color/onButton"
+    android:textAllCaps="false"
     android:textSize="@dimen/smallFont"
     android:layout_marginStart="12dp"
     android:layout_marginEnd="12dp"
@@ -95,11 +97,11 @@
     android:id="@+id/button_start_wireless"
     android:layout_height="wrap_content"
     android:layout_width="match_parent"
-    android:background="@drawable/background_cron"
-    android:backgroundTint="@color/button"
+    android:background="@drawable/button_secondary"
     android:gravity="center"
     android:text="@string/set_device_button_start_wireless"
-    android:textColor="@color/onButton"
+    android:textColor="@color/onButtonSecond"
+    android:textAllCaps="false"
     android:textSize="@dimen/smallFont"
     android:layout_marginStart="12dp"
     android:layout_marginEnd="12dp"

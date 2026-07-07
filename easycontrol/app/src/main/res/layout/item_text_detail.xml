@@ -5,14 +5,17 @@
   android:layout_height="wrap_content"
   android:background="@color/cardBackground"
   android:gravity="center_vertical"
+  android:minHeight="66dp"
   android:orientation="vertical"
-  android:paddingTop="6dp"
-  android:paddingBottom="6dp">
+  android:paddingTop="10dp"
+  android:paddingBottom="10dp">
 
   <TextView
     android:id="@+id/item_text"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
+    android:fontFamily="sans-serif-medium"
+    android:includeFontPadding="false"
     android:text="文本"
     android:textColor="@color/onCardBackground"
     android:textSize="@dimen/smallFont"
@@ -22,7 +25,7 @@
     android:id="@+id/item_detail"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:layout_marginStart="10dp"
+    android:layout_marginTop="4dp"
     android:text="辅助说明"
     android:textColor="@color/onCardBackgroundSecond"
     android:textSize="@dimen/smallSmallFont"
