@@ -93,6 +93,7 @@ afterEvaluate {
     ].each { taskName ->
       tasks.matching { it.name == taskName }.configureEach {
         // Ensure both server copy tasks are declared as dependencies to avoid implicit dependency issues
+//        dependsOn serverJarTask
         dependsOn ':server:copyDebug'
         dependsOn ':server:copyRelease'
       }
