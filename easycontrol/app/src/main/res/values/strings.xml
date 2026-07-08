@@ -8,6 +8,15 @@
   <string name="main_float_permission">请授予悬浮窗权限\n否则软件功能不完整</string>
   <string name="main_float_permission_button">前往授权悬浮</string>
   <string name="main_no_float_mode_button">始终全屏模式</string>
+  <string name="main_setting_default_detail">分辨率/帧率/编码</string>
+  <string name="main_setting_display_detail">唤醒/背光/窗口</string>
+  <string name="main_setting_other_detail">连接/USB/密钥</string>
+  <string name="main_setting_about_detail">说明/版本/许可</string>
+  <string name="privacy_policy_title">隐私政策</string>
+  <string name="privacy_policy_summary">请先阅读并同意隐私政策，才可继续使用易控车机版。</string>
+  <string name="privacy_policy_agree">同意并继续</string>
+  <string name="privacy_policy_cancel">取消并退出</string>
+  <string name="privacy_policy_content">生效日期：2026-07-08\n\n1. 本应用用途\n易控车机版用于在本机上连接、控制和投屏你授权的 Android 设备。应用会通过 USB、无线 ADB 或局域网连接被控端，实现屏幕镜像、应用流转、音频传输、输入控制等功能。\n\n2. 本应用可能使用的数据\n为完成连接和投屏功能，应用可能在本机保存设备名称、设备 UUID、连接地址、端口、投屏参数、显示设置、ADB 密钥、日志和你手动配置的应用包名。这些数据默认保存在本机，不会主动上传到开发者服务器。\n\n3. 权限用途\n悬浮窗权限用于显示小窗、全屏投屏或控制浮层；网络权限用于连接被控端设备；USB 权限用于识别并连接 USB 调试设备；使用情况权限仅在你启用软件监测功能时用于识别前台应用事件；比亚迪全景/倒车影像相关权限仅用于监听车辆影像状态，以便临时隐藏或恢复投屏界面。\n\n4. 音视频与控制数据\n投屏过程中，屏幕画面、音频和触控/按键指令会在本机和你连接的被控端之间传输。应用不会主动把这些内容发送给开发者或无关第三方。请只连接你拥有或已获得授权的设备。\n\n5. 本地存储与清除\n你可以通过系统应用管理清除本应用数据，也可以在应用内重新生成 ADB 密钥。清除数据后，已保存设备、授权状态、设置项和密钥可能需要重新配置。\n\n6. 第三方 SDK\n本版本可能包含比亚迪车机开放能力相关 SDK，仅用于监听车辆倒车影像/360 全景等状态。具体可用性以车辆系统和已授权权限为准。\n\n7. 你的选择\n点击“同意并继续”表示你已阅读并同意本政策；点击“取消并退出”将关闭应用。</string>
 
   <!-- 配对页面 -->
   <string name="pair_ip">IP地址</string>

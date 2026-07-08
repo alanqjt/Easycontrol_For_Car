@@ -8,6 +8,15 @@
   <string name="main_float_permission">Please grant floating window permission.\nOtherwise, the software functions are incomplete.</string>
   <string name="main_float_permission_button">Go authorize</string>
   <string name="main_no_float_mode_button">Always full</string>
+  <string name="main_setting_default_detail">Size/FPS/codec</string>
+  <string name="main_setting_display_detail">Wake/backlight/window</string>
+  <string name="main_setting_other_detail">Connect/USB/key</string>
+  <string name="main_setting_about_detail">Guide/version/license</string>
+  <string name="privacy_policy_title">Privacy Policy</string>
+  <string name="privacy_policy_summary">Please read and accept the Privacy Policy before using EasyControl.</string>
+  <string name="privacy_policy_agree">Agree and continue</string>
+  <string name="privacy_policy_cancel">Cancel and exit</string>
+  <string name="privacy_policy_content">Effective date: 2026-07-08\n\n1. App purpose\nEasyControl is used to connect, control, and mirror Android devices that you authorize. The app may use USB, wireless ADB, or local network connections to provide screen mirroring, app transfer, audio transfer, and input control.\n\n2. Data used by this app\nTo complete connection and mirroring features, the app may store device names, device UUIDs, connection addresses, ports, mirroring parameters, display settings, ADB keys, logs, and app package names that you configure manually. These data are stored locally by default and are not actively uploaded to developer servers.\n\n3. Permission usage\nOverlay permission is used to show floating windows, full-screen mirroring, or control overlays. Network permission is used to connect to controlled devices. USB permission is used to identify and connect USB debugging devices. Usage access is only used when you enable app monitoring, to identify foreground app events. BYD panorama/reverse camera permissions are only used to listen for vehicle camera states so the app can temporarily hide or restore the mirroring view.\n\n4. Audio, video, and control data\nDuring mirroring, screen frames, audio, and touch/key commands are transmitted between this device and the controlled device you connect. The app does not actively send these contents to the developer or unrelated third parties. Please only connect devices you own or are authorized to use.\n\n5. Local storage and clearing\nYou can clear this app\'s data in system settings, or regenerate ADB keys inside the app. After clearing data, saved devices, authorization state, settings, and keys may need to be configured again.\n\n6. Third-party SDK\nThis version may include BYD vehicle open capability SDK, used only to listen for reverse camera / 360 panorama states. Availability depends on the vehicle system and granted permissions.\n\n7. Your choice\nTap &quot;Agree and continue&quot; to confirm that you have read and accepted this policy. Tap &quot;Cancel and exit&quot; to close the app.</string>
 
   <!-- 配对页面 -->
   <string name="pair_ip">IP address</string>
@@ -26,6 +35,8 @@
   <string name="pair_failed"> failed</string>
 
   <!-- 设置页面 -->
+  <string name="set_title">Settings</string>
+  <string name="set_title_detail">Tune the mirroring experience</string>
   <string name="set_default">Default settings</string>
   <string name="set_display">Display</string>
   <string name="set_wake_up_screen_on_connect">Wake up after connection</string>

@@ -21,6 +21,8 @@ import android.view.animation.LinearInterpolator;
 
 import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.databinding.ActivityMainBinding;
+import top.eiyooooo.easycontrol.app.databinding.DialogSettingSectionBinding;
+import top.eiyooooo.easycontrol.app.databinding.ItemPrivacyPolicyBinding;
 import top.eiyooooo.easycontrol.app.databinding.ItemRequestPermissionBinding;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
@@ -28,6 +30,7 @@ import top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor;
 import top.eiyooooo.easycontrol.app.helper.DeviceListAdapter;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
 import top.eiyooooo.easycontrol.app.helper.ConnectHelper;
+import top.eiyooooo.easycontrol.app.helper.SettingsPanelHelper;
 
 public class MainActivity extends Activity {
   private static final String TAG = "MainActivity";
@@ -56,9 +59,27 @@ public class MainActivity extends Activity {
     PublicTools.setLocale(this);
     mainActivity = ActivityMainBinding.inflate(this.getLayoutInflater());
     setContentView(mainActivity.getRoot());
-    // 检测权限
+    if (!AppData.setting.getPrivacyPolicyAccepted()) showPrivacyPolicyDialog();
+    else continueAfterPrivacyAccepted();
+  }
+
+  private void continueAfterPrivacyAccepted() {
     if (AppData.setting.getAlwaysFullMode() || haveOverlayPermission()) startApp();
     else createAlert();
+  }
+
+  private void showPrivacyPolicyDialog() {
+    ItemPrivacyPolicyBinding privacyPolicyView = ItemPrivacyPolicyBinding.inflate(LayoutInflater.from(this));
+    privacyPolicyView.buttonAgree.setOnClickListener(v -> {
+      AppData.setting.setPrivacyPolicyAccepted(true);
+      Dialog dialog = (Dialog) privacyPolicyView.getRoot().getTag();
+      if (dialog != null) dialog.cancel();
+      continueAfterPrivacyAccepted();
+    });
+    privacyPolicyView.buttonCancel.setOnClickListener(v -> finishAffinity());
+    Dialog dialog = PublicTools.createDialog(this, false, privacyPolicyView.getRoot());
+    privacyPolicyView.getRoot().setTag(dialog);
+    dialog.show();
   }
 
   private void startApp() {
@@ -88,7 +109,7 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onDestroy() {
-    AppData.uiHandler.removeCallbacks(connectHelper.showStartDefaultUSB);
+    if (connectHelper != null) AppData.uiHandler.removeCallbacks(connectHelper.showStartDefaultUSB);
     AppData.myBroadcastReceiver.setDeviceListAdapter(null);
     AppData.myBroadcastReceiver.setConnectHelper(null);
     ConnectHelper.status = false;
@@ -97,13 +118,17 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onPause() {
-    AppData.uiHandler.removeCallbacks(connectHelper.showStartDefaultUSB);
+    if (connectHelper != null) AppData.uiHandler.removeCallbacks(connectHelper.showStartDefaultUSB);
     ConnectHelper.status = false;
     super.onPause();
   }
 
   @Override
   protected void onResume() {
+    if (!AppData.setting.getPrivacyPolicyAccepted()) {
+      super.onResume();
+      return;
+    }
     ConnectHelper.status = true;
     if (!AppData.setting.getAlwaysFullMode() && !haveOverlayPermission()) createAlert();
     else {
@@ -180,7 +205,18 @@ public class MainActivity extends Activity {
     });
     mainActivity.buttonPair.setOnClickListener(v -> startActivity(new Intent(this, PairActivity.class)));
     mainActivity.buttonAdd.setOnClickListener(v -> PublicTools.createAddDeviceView(this, Device.getDefaultDevice(UUID.randomUUID().toString(), Device.TYPE_NORMAL), deviceListAdapter).show());
-    mainActivity.buttonSet.setOnClickListener(v -> startActivity(new Intent(this, SetActivity.class)));
+    mainActivity.buttonSetDefault.setOnClickListener(v -> showSettingSection(SettingsPanelHelper.SECTION_DEFAULT));
+    mainActivity.buttonSetDisplay.setOnClickListener(v -> showSettingSection(SettingsPanelHelper.SECTION_DISPLAY));
+    mainActivity.buttonSetOther.setOnClickListener(v -> showSettingSection(SettingsPanelHelper.SECTION_OTHER));
+    mainActivity.buttonSetAbout.setOnClickListener(v -> showSettingSection(SettingsPanelHelper.SECTION_ABOUT));
+  }
+
+  private void showSettingSection(int section) {
+    DialogSettingSectionBinding binding = DialogSettingSectionBinding.inflate(LayoutInflater.from(this));
+    binding.settingTitle.setText(SettingsPanelHelper.getSectionTitle(this, section));
+    binding.settingDetail.setText(SettingsPanelHelper.getSectionDetail(this, section));
+    SettingsPanelHelper.populateSection(this, section, binding.settingContent);
+    PublicTools.createDialog(this, true, binding.getRoot()).show();
   }
 
   // BYD 全景影像类在非比亚迪系统上不存在，先探测再申请权限，避免普通设备调试时反复弹无效权限。

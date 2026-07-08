@@ -290,6 +290,15 @@ public final class Setting {
     editor.apply();
   }
 
+  public boolean getPrivacyPolicyAccepted() {
+    return sharedPreferences.getBoolean("privacyPolicyAccepted", false);
+  }
+
+  public void setPrivacyPolicyAccepted(boolean value) {
+    editor.putBoolean("privacyPolicyAccepted", value);
+    editor.apply();
+  }
+
   public boolean getEnableUSB() {
     return sharedPreferences.getBoolean("enableUSB", true);
   }
