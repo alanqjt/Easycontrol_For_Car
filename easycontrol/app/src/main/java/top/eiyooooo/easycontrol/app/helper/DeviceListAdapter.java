@@ -7,6 +7,7 @@ import android.app.Dialog;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.hardware.usb.UsbDevice;
 import android.os.Build;
 import android.view.LayoutInflater;
@@ -80,9 +81,11 @@ public class DeviceListAdapter {
 
   private int getColumnCount() {
     int widthPx = devicesGrid.getWidth() > 0 ? devicesGrid.getWidth() : context.getResources().getDisplayMetrics().widthPixels;
-    int heightPx = context.getResources().getDisplayMetrics().heightPixels;
-    int widthDp = (int) (widthPx / context.getResources().getDisplayMetrics().density);
-    return widthPx > heightPx || widthDp >= 720 ? 4 : 2;
+    int heightPx = devicesGrid.getHeight() > 0 ? devicesGrid.getHeight() : context.getResources().getDisplayMetrics().heightPixels;
+    int orientation = context.getResources().getConfiguration().orientation;
+    if (orientation == Configuration.ORIENTATION_PORTRAIT) return 2;
+    if (orientation == Configuration.ORIENTATION_LANDSCAPE) return 4;
+    return widthPx > heightPx ? 4 : 2;
   }
 
   private GridLayout.LayoutParams createCardLayoutParams(int columnCount, int deviceIndex) {
@@ -192,6 +195,10 @@ public class DeviceListAdapter {
   }
 
   private void checkConnection(Device device) {
+    if (device.isLinkDevice() && !linkDevices.containsKey(device.uuid)) {
+      device.connection = 2;
+      return;
+    }
     device.connection = 0;
 
     synchronized (checkingConnection) {
@@ -301,15 +308,22 @@ public class DeviceListAdapter {
 
   private void queryDevices() {
     ArrayList<Device> rawDevices = AppData.dbHelper.getAll();
-    ArrayList<Device> tmp1 = new ArrayList<>();
-    ArrayList<Device> tmp2 = new ArrayList<>();
+    ArrayList<Device> connectedLinkDevices = new ArrayList<>();
+    ArrayList<Device> normalDevices = new ArrayList<>();
+    ArrayList<Device> offlineLinkDevices = new ArrayList<>();
     for (Device device : rawDevices) {
-      if (device.isLinkDevice() && linkDevices.containsKey(device.uuid)) tmp1.add(device);
-      else if (device.isNormalDevice()) tmp2.add(device);
+      if (device.isNormalDevice()) {
+        normalDevices.add(device);
+      } else if (device.isLinkDevice() && linkDevices.containsKey(device.uuid)) {
+        connectedLinkDevices.add(device);
+      } else if (device.isLinkDevice()) {
+        offlineLinkDevices.add(device);
+      }
     }
     devicesList.clear();
-    devicesList.addAll(tmp1);
-    devicesList.addAll(tmp2);
+    devicesList.addAll(connectedLinkDevices);
+    devicesList.addAll(normalDevices);
+    devicesList.addAll(offlineLinkDevices);
     if (!startedDefault && devicesList.isEmpty()) startedDefault = true;
   }
 
