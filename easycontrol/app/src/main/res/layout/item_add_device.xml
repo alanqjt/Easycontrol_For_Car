@@ -4,110 +4,166 @@
   android:layout_height="wrap_content"
   android:background="@drawable/background_cron"
   android:orientation="vertical"
-  android:padding="15dp">
+  android:paddingStart="24dp"
+  android:paddingTop="22dp"
+  android:paddingEnd="24dp"
+  android:paddingBottom="24dp">
 
   <TextView
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:text="@string/add_device_name"
+    android:fontFamily="sans-serif-medium"
+    android:includeFontPadding="false"
+    android:text="@string/add_device_title"
     android:textColor="@color/onCardBackground"
-    android:textSize="@dimen/smallFont" />
-
-  <EditText
-    android:id="@+id/name"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:hint="@string/add_device_name_hint"
-    android:textColor="@color/onCardBackground"
-    android:textColorHint="@color/onCardBackgroundSecond"
-    android:textSize="@dimen/smallFont" />
+    android:textSize="@dimen/largeFont" />
 
   <TextView
-    android:id="@+id/address_title"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginTop="4dp"
-    android:text="@string/add_device_address"
-    android:textColor="@color/onCardBackground"
+    android:layout_marginTop="6dp"
+    android:includeFontPadding="false"
+    android:text="@string/add_device_detail"
+    android:textColor="@color/onCardBackgroundSecond"
     android:textSize="@dimen/smallFont" />
 
-  <GridLayout
+  <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:columnCount="2" >
+    android:layout_marginTop="18dp"
+    android:background="@drawable/setting_group_background"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:fontFamily="sans-serif-medium"
+      android:includeFontPadding="false"
+      android:text="@string/add_device_name"
+      android:textColor="@color/onCardBackground"
+      android:textSize="@dimen/smallFont" />
 
     <EditText
-      android:id="@+id/address"
-      android:layout_width="0dp"
+      android:id="@+id/name"
+      android:layout_width="match_parent"
       android:layout_height="wrap_content"
-      android:layout_columnWeight="5"
-      android:digits="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ[]-.:*"
-      android:hint="@string/add_device_address_hint"
+      android:layout_marginTop="8dp"
+      android:background="@drawable/input_field_background"
+      android:hint="@string/add_device_name_hint"
+      android:minHeight="52dp"
+      android:paddingStart="14dp"
+      android:paddingEnd="14dp"
+      android:singleLine="true"
       android:textColor="@color/onCardBackground"
       android:textColorHint="@color/onCardBackgroundSecond"
       android:textSize="@dimen/smallFont" />
 
-    <Button
-      android:id="@+id/scan_address"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-    android:layout_columnWeight="1"
-    android:layout_gravity="end"
-      android:background="@drawable/button_secondary"
-      android:gravity="center"
-      android:text="@string/add_device_scan"
-      android:textColor="@color/onButtonSecond"
-      android:textAllCaps="false"
-      android:textSize="@dimen/smallFont" />
-
-  </GridLayout>
-
-  <TextView
-    android:id="@+id/specified_app_title"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_marginTop="4dp"
-    android:text="@string/add_device_specify_app"
-    android:textColor="@color/onCardBackground"
-    android:textSize="@dimen/smallFont" />
-
-  <GridLayout
+    <TextView
+      android:id="@+id/address_title"
       android:layout_width="match_parent"
       android:layout_height="wrap_content"
-      android:columnCount="2" >
+      android:layout_marginTop="16dp"
+      android:fontFamily="sans-serif-medium"
+      android:includeFontPadding="false"
+      android:text="@string/add_device_address"
+      android:textColor="@color/onCardBackground"
+      android:textSize="@dimen/smallFont" />
 
-    <EditText
-        android:id="@+id/specified_app"
+    <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <EditText
+        android:id="@+id/address"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_columnWeight="5"
+        android:layout_weight="1"
+        android:background="@drawable/input_field_background"
         android:digits="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ[]-.:*"
-        android:hint="@string/add_device_specify_app_hint"
+        android:hint="@string/add_device_address_hint"
+        android:minHeight="52dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:singleLine="true"
         android:textColor="@color/onCardBackground"
         android:textColorHint="@color/onCardBackgroundSecond"
         android:textSize="@dimen/smallFont" />
 
-    <Button
-        android:id="@+id/scan_remote_app_list"
-        android:layout_width="wrap_content"
+      <Button
+        android:id="@+id/scan_address"
+        android:layout_width="120dp"
         android:layout_height="wrap_content"
-        android:layout_columnWeight="1"
-        android:layout_gravity="end"
+        android:layout_marginStart="12dp"
         android:background="@drawable/button_secondary"
         android:gravity="center"
-        android:text="@string/add_device_scan"
+        android:minHeight="52dp"
+        android:text="@string/add_device_scan_address"
         android:textColor="@color/onButtonSecond"
         android:textAllCaps="false"
         android:textSize="@dimen/smallFont" />
 
-  </GridLayout>
+    </LinearLayout>
+
+    <TextView
+      android:id="@+id/specified_app_title"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="16dp"
+      android:fontFamily="sans-serif-medium"
+      android:includeFontPadding="false"
+      android:text="@string/add_device_specify_app"
+      android:textColor="@color/onCardBackground"
+      android:textSize="@dimen/smallFont" />
+
+    <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <EditText
+        android:id="@+id/specified_app"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:background="@drawable/input_field_background"
+        android:digits="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ[]-.:*"
+        android:hint="@string/add_device_specify_app_hint"
+        android:minHeight="52dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:singleLine="true"
+        android:textColor="@color/onCardBackground"
+        android:textColorHint="@color/onCardBackgroundSecond"
+        android:textSize="@dimen/smallFont" />
+
+      <Button
+        android:id="@+id/scan_remote_app_list"
+        android:layout_width="120dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:background="@drawable/button_secondary"
+        android:gravity="center"
+        android:minHeight="52dp"
+        android:text="@string/add_device_scan_app"
+        android:textColor="@color/onButtonSecond"
+        android:textAllCaps="false"
+        android:textSize="@dimen/smallFont" />
+
+    </LinearLayout>
+  </LinearLayout>
 
 
   <CheckBox
     android:id="@+id/is_options"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:layout_marginTop="4dp"
+    android:layout_marginTop="14dp"
     android:buttonTint="@color/onCardBackground"
     android:text="@string/add_device_option"
     android:textColor="@color/onCardBackgroundSecond"
@@ -116,18 +172,20 @@
   <LinearLayout
     android:id="@+id/options"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
     android:orientation="vertical"
     android:visibility="gone" />
 
   <Button
     android:id="@+id/ok"
-    android:layout_width="200dp"
+    android:layout_width="240dp"
     android:layout_height="wrap_content"
     android:layout_gravity="center_horizontal"
-    android:layout_marginTop="10dp"
+    android:layout_marginTop="18dp"
     android:background="@drawable/button_primary"
     android:gravity="center"
+    android:minHeight="54dp"
     android:text="@string/add_device_button"
     android:textColor="@color/onButton"
     android:textAllCaps="false"

@@ -2,11 +2,13 @@ package top.eiyooooo.easycontrol.app.helper;
 
 import static android.content.ClipDescription.MIMETYPE_TEXT_PLAIN;
 
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.hardware.usb.UsbDevice;
+import android.os.Build;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,7 +20,6 @@ import java.util.HashMap;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 import top.eiyooooo.easycontrol.app.R;
 import top.eiyooooo.easycontrol.app.StartDeviceActivity;
@@ -40,10 +41,11 @@ public class DeviceListAdapter {
 
   private final Context context;
   private final GridLayout devicesGrid;
+  private Runnable renderListener;
 
   public ExecutorService checkConnectionExecutor;
   private final Object checkingConnection = new Object();
-  private Thread checkingConnectionThread;
+  private int pendingConnectionChecks;
 
   public DeviceListAdapter(Context c, GridLayout devicesGrid) {
     context = c;
@@ -69,6 +71,11 @@ public class DeviceListAdapter {
       devicesGrid.addView(cardBinding.getRoot(), createCardLayoutParams(columnCount, deviceIndex));
       deviceIndex++;
     }
+    if (renderListener != null) renderListener.run();
+  }
+
+  public void setRenderListener(Runnable renderListener) {
+    this.renderListener = renderListener;
   }
 
   private int getColumnCount() {
@@ -108,6 +115,7 @@ public class DeviceListAdapter {
     binding.deviceExpand.setVisibility(View.GONE);
     binding.deviceActions.setVisibility(View.VISIBLE);
     setDeviceIcon(binding, device);
+    setDeviceStatus(binding, device);
     binding.deviceName.setText(device.name);
 
     binding.getRoot().setOnLongClickListener(v -> {
@@ -129,6 +137,37 @@ public class DeviceListAdapter {
     } else {
       binding.deviceIcon.setImageResource(R.drawable.wifi_can_not_connect);
     }
+  }
+
+  private void setDeviceStatus(ItemDeviceCardBinding binding, Device device) {
+    binding.deviceTransport.setText(device.isLinkDevice() ? R.string.device_type_usb : R.string.device_type_wifi);
+    binding.deviceIdentity.setText(getDeviceIdentity(device));
+    if (device.connection == 1) {
+      binding.deviceConnectionStatus.setText(R.string.device_status_ready);
+      binding.deviceConnectionStatus.setTextColor(getColor(R.color.statusOnline));
+    } else if (device.connection == 0) {
+      binding.deviceConnectionStatus.setText(R.string.device_status_checking);
+      binding.deviceConnectionStatus.setTextColor(getColor(R.color.statusChecking));
+    } else if (device.connection == 2) {
+      binding.deviceConnectionStatus.setText(R.string.device_status_offline);
+      binding.deviceConnectionStatus.setTextColor(getColor(R.color.statusOffline));
+    } else {
+      binding.deviceConnectionStatus.setText(R.string.device_status_pending);
+      binding.deviceConnectionStatus.setTextColor(getColor(R.color.onCardBackgroundSecond));
+    }
+  }
+
+  private String getDeviceIdentity(Device device) {
+    if (device.isNormalDevice() && device.address != null && !device.address.isEmpty()) {
+      return context.getString(R.string.device_identity_address, device.address);
+    }
+    int start = Math.max(0, device.uuid.length() - 5);
+    return context.getString(R.string.device_identity_id, device.uuid.substring(start));
+  }
+
+  private int getColor(int colorRes) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return context.getColor(colorRes);
+    return context.getResources().getColor(colorRes);
   }
 
   private void bindActions(ItemDeviceCardBinding binding, Device device) {
@@ -155,44 +194,20 @@ public class DeviceListAdapter {
   private void checkConnection(Device device) {
     device.connection = 0;
 
-    if (checkConnectionExecutor != null && checkConnectionExecutor.isShutdown() && checkingConnectionThread != null) {
-      try {
-        checkingConnectionThread.join();
-      } catch (Exception ignored) {
+    synchronized (checkingConnection) {
+      if (checkConnectionExecutor == null || checkConnectionExecutor.isShutdown()) {
+        checkConnectionExecutor = Executors.newFixedThreadPool(Math.max(1, devicesList.size()));
       }
+      pendingConnectionChecks++;
     }
-
-    if (checkConnectionExecutor == null) {
-      checkConnectionExecutor = Executors.newFixedThreadPool(devicesList.size() + 1);
-    }
-
-    if (checkingConnectionThread != null) checkingConnectionThread.interrupt();
-    checkingConnectionThread = new Thread(() -> {
-      try {
-        Thread.sleep(1500);
-        checkConnectionExecutor.shutdown();
-        synchronized (checkingConnection) {
-          checkingConnection.notifyAll();
-        }
-        while (!checkConnectionExecutor.awaitTermination(600, TimeUnit.MILLISECONDS)) {
-          checkConnectionExecutor.shutdownNow();
-        }
-        AppData.uiHandler.post(this::render);
-        checkConnectionExecutor = null;
-        if (!startedDefault) {
-          AppData.uiHandler.post(() -> startDefault(AppData.setting.getTryStartDefaultInAppTransfer() ? 1 : 0));
-          startedDefault = true;
-        }
-      } catch (InterruptedException ignored) {
-      }
-    });
-    checkingConnectionThread.start();
 
     checkConnectionExecutor.execute(() -> {
       try {
         if (!Adb.adbMap.containsKey(device.uuid)) {
           if (device.isLinkDevice()) {
-            Adb adb = new Adb(device.uuid, linkDevices.get(device.uuid), AppData.keyPair);
+            UsbDevice usbDevice = linkDevices.get(device.uuid);
+            if (usbDevice == null) throw new Exception("USB device not ready");
+            Adb adb = new Adb(device.uuid, usbDevice, AppData.keyPair);
             Adb.adbMap.put(device.uuid, adb);
           } else {
             new Adb(device.address, AppData.keyPair);
@@ -200,20 +215,41 @@ public class DeviceListAdapter {
             Adb.adbMap.put(device.uuid, adb);
           }
         }
-        synchronized (checkingConnection) {
-          checkingConnection.wait();
-        }
         if (device.connection == 0) device.connection = 1;
       } catch (Exception e) {
         device.connection = 2;
         L.log(device.uuid, e);
+      } finally {
+        AppData.uiHandler.post(this::render);
+        finishConnectionCheck();
       }
     });
   }
 
+  private void finishConnectionCheck() {
+    ExecutorService executorToShutdown = null;
+    boolean shouldStartDefault = false;
+    synchronized (checkingConnection) {
+      if (pendingConnectionChecks > 0) pendingConnectionChecks--;
+      if (pendingConnectionChecks == 0) {
+        executorToShutdown = checkConnectionExecutor;
+        checkConnectionExecutor = null;
+        if (!startedDefault) {
+          startedDefault = true;
+          shouldStartDefault = true;
+        }
+      }
+    }
+    if (executorToShutdown != null) executorToShutdown.shutdown();
+    if (shouldStartDefault) {
+      AppData.uiHandler.post(() -> startDefault(AppData.setting.getTryStartDefaultInAppTransfer() ? 1 : 0));
+    }
+  }
+
   private void onLongClickCard(Device device) {
     ItemSetDeviceBinding itemSetDeviceBinding = ItemSetDeviceBinding.inflate(LayoutInflater.from(context));
-    Dialog dialog = PublicTools.createDialog(context, true, itemSetDeviceBinding.getRoot());
+    Dialog dialog = PublicTools.createDialog(context, true, itemSetDeviceBinding.getRoot(), 640);
+    itemSetDeviceBinding.deviceDetail.setText(device.name + " · " + (device.isNormalDevice() ? device.address : device.uuid));
     if (device.isLinkDevice()) {
       itemSetDeviceBinding.buttonStartWireless.setVisibility(View.VISIBLE);
       itemSetDeviceBinding.buttonStartWireless.setOnClickListener(v -> {
@@ -248,10 +284,17 @@ public class DeviceListAdapter {
       PublicTools.createAddDeviceView(context, device, this).show();
     });
     itemSetDeviceBinding.buttonDelete.setOnClickListener(v -> {
-      AppData.dbHelper.delete(device);
-      if (Adb.adbMap.containsKey(device.uuid)) Objects.requireNonNull(Adb.adbMap.get(device.uuid)).close();
-      update();
-      dialog.cancel();
+      new AlertDialog.Builder(context)
+              .setTitle(R.string.set_device_delete_confirm_title)
+              .setMessage(R.string.set_device_delete_confirm_message)
+              .setNegativeButton(R.string.cancel, null)
+              .setPositiveButton(R.string.set_device_delete_confirm_action, (confirmDialog, which) -> {
+                AppData.dbHelper.delete(device);
+                if (Adb.adbMap.containsKey(device.uuid)) Objects.requireNonNull(Adb.adbMap.get(device.uuid)).close();
+                update();
+                dialog.cancel();
+              })
+              .show();
     });
     dialog.show();
   }

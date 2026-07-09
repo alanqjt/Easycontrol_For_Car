@@ -12,6 +12,17 @@
   <string name="main_setting_display_detail">唤醒/背光/窗口</string>
   <string name="main_setting_other_detail">连接/USB/密钥</string>
   <string name="main_setting_about_detail">说明/版本/许可</string>
+  <string name="dialog_close">关闭</string>
+  <string name="main_device_summary_empty">未发现设备 · 点击 + 添加或配对</string>
+  <string name="main_device_summary">已发现 %1$d 台 · 可连接 %2$d 台 · 检测中 %3$d 台</string>
+  <string name="device_status_ready">可连接</string>
+  <string name="device_status_checking">检测中</string>
+  <string name="device_status_offline">离线</string>
+  <string name="device_status_pending">待检测</string>
+  <string name="device_type_usb">USB</string>
+  <string name="device_type_wifi">WiFi</string>
+  <string name="device_identity_id">ID %1$s</string>
+  <string name="device_identity_address">%1$s</string>
   <string name="privacy_policy_title">隐私政策</string>
   <string name="privacy_policy_summary">请先阅读并同意隐私政策，才可继续使用易控车机版。</string>
   <string name="privacy_policy_agree">同意并继续</string>
@@ -39,6 +50,19 @@
   <string name="set_title_detail">把投屏体验调到更顺手</string>
   <string name="set_default">默认参数</string>
   <string name="set_display">显示</string>
+  <string name="setting_group_quality">画质与延迟</string>
+  <string name="setting_group_audio_sync">音频与同步</string>
+  <string name="setting_group_codec_display">编码与显示</string>
+  <string name="setting_group_startup">启动连接</string>
+  <string name="setting_group_wake_backlight">唤醒与背光</string>
+  <string name="setting_group_window">窗口行为</string>
+  <string name="setting_group_connection_usb">连接与 USB</string>
+  <string name="setting_group_fullscreen_transfer">全屏与应用流转</string>
+  <string name="setting_group_auto_task">自动任务</string>
+  <string name="setting_group_tools_security">工具与密钥</string>
+  <string name="setting_group_about_project">项目说明</string>
+  <string name="setting_group_about_docs">帮助与文档</string>
+  <string name="setting_group_about_version">版本与声明</string>
   <string name="set_wake_up_screen_on_connect">连接后自动唤醒</string>
   <string name="set_wake_up_screen_on_connect_detail">连接成功后自动唤醒被控端</string>
   <string name="set_light_off_on_connect">连接后关闭背光</string>
@@ -146,12 +170,16 @@
 
   <!-- 设备添加模块 -->
   <string name="add_device_name">设备名称</string>
+  <string name="add_device_title">设备信息</string>
+  <string name="add_device_detail">填写连接地址，必要时再展开高级参数。</string>
   <string name="add_device_name_hint">不可为空</string>
   <string name="add_device_address">地址:端口号</string>
   <string name="add_device_address_hint">支持IPv4/v6地址、域名</string>
   <string name="add_device_specify_app">流转指定包名的应用</string>
   <string name="add_device_specify_app_hint">留空则为对最近使用的应用流转</string>
   <string name="add_device_scan">扫描</string>
+  <string name="add_device_scan_address">扫描地址</string>
+  <string name="add_device_scan_app">选择应用</string>
   <string name="add_device_scanning">扫描中…</string>
   <string name="add_device_scan_finish">扫描完成</string>
   <string name="add_device_scan_address_finish_none">扫描完成(无设备)</string>
@@ -160,7 +188,8 @@
   <string name="add_device_button">确认</string>
 
   <!-- 设备设置模块 -->
-  <string name="set_device_title">干什么◔ ‸◔?</string>
+  <string name="set_device_title">设备操作</string>
+  <string name="set_device_detail">管理连接、快捷方式和设备配置</string>
   <string name="set_device_button_night_mode">黑暗模式</string>
   <string name="night_mode_current">当前黑暗模式: </string>
   <string name="night_mode_auto">自动</string>
@@ -177,6 +206,9 @@
   <string name="set_device_button_start_wireless_success">成功</string>
   <string name="set_device_button_change">修改</string>
   <string name="set_device_button_delete">删除</string>
+  <string name="set_device_delete_confirm_title">删除这个设备？</string>
+  <string name="set_device_delete_confirm_message">删除后会移除本地保存的设备配置，当前连接也会关闭。</string>
+  <string name="set_device_delete_confirm_action">确认删除</string>
 
   <!-- 加载中模块 -->
   <string name="loading_text">加加加加载中</string>

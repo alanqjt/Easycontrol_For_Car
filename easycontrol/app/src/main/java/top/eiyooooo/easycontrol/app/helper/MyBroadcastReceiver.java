@@ -11,6 +11,8 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
+
+import top.eiyooooo.easycontrol.app.BuildConfig;
 import top.eiyooooo.easycontrol.app.adb.Adb;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
@@ -22,7 +24,7 @@ import java.util.Objects;
 
 public class MyBroadcastReceiver extends BroadcastReceiver {
 
-  private static final String ACTION_USB_PERMISSION = "top.eiyooooo.easycontrol.app.USB_PERMISSION";
+  private static final String ACTION_USB_PERMISSION = BuildConfig.APPLICATION_ID + ".USB_PERMISSION";
   private static final String ACTION_CONTROL = "top.eiyooooo.easycontrol.app.CONTROL";
   private static final String ACTION_SCREEN_OFF = "android.intent.action.SCREEN_OFF";
   public static final String ACTION_CONFIGURATION_CHANGED = "android.intent.action.CONFIGURATION_CHANGED";
@@ -175,7 +177,9 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
     if (AppData.usbManager==null)return;
     Intent usbPermissionIntent = new Intent(ACTION_USB_PERMISSION);
     usbPermissionIntent.setPackage(AppData.main.getPackageName());
-    PendingIntent permissionIntent = PendingIntent.getBroadcast(context, 0, usbPermissionIntent, Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
+    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
+    PendingIntent permissionIntent = PendingIntent.getBroadcast(context, usbDevice.getDeviceId(), usbPermissionIntent, flags);
     AppData.usbManager.requestPermission(usbDevice, permissionIntent);
   }
 
@@ -197,7 +201,8 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
   // 处理USB授权结果
   private void onGetUsbPer(UsbDevice usbDevice) {
     // 有线设备使用序列号作为唯一标识符
-    String uuid = usbDevice.getSerialNumber();
+    if (!hasUsbPermission(usbDevice)) return;
+    String uuid = getUsbUuid(usbDevice);
     if (uuid == null) return;
     // 查找ADB的接口
     for (int i = 0; i < usbDevice.getInterfaceCount(); i++) {
@@ -221,5 +226,26 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
         break;
       }
     }
+  }
+
+  private boolean hasUsbPermission(UsbDevice usbDevice) {
+    try {
+      return AppData.usbManager != null && AppData.usbManager.hasPermission(usbDevice);
+    } catch (Exception ignored) {
+      return false;
+    }
+  }
+
+  private String getUsbUuid(UsbDevice usbDevice) {
+    try {
+      String serialNumber = usbDevice.getSerialNumber();
+      if (serialNumber != null && !serialNumber.isEmpty()) return serialNumber;
+    } catch (SecurityException e) {
+      L.log("USB", e);
+    } catch (Exception ignored) {
+    }
+    String deviceName = usbDevice.getDeviceName();
+    if (deviceName != null && !deviceName.isEmpty()) return deviceName;
+    return "usb-" + usbDevice.getVendorId() + "-" + usbDevice.getProductId();
   }
 }

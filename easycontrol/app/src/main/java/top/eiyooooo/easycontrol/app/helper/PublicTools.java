@@ -102,10 +102,16 @@ public class PublicTools {
 
   // 创建弹窗
   public static Dialog createDialog(Context context, boolean canCancel, View view) {
+    return createDialog(context, canCancel, view, 0);
+  }
+
+  public static Dialog createDialog(Context context, boolean canCancel, View view, int widthDp) {
     AlertDialog.Builder builder = new AlertDialog.Builder(context);
     builder.setCancelable(true);
     ScrollView dialogView = ModuleDialogBinding.inflate(LayoutInflater.from(context)).getRoot();
-    dialogView.addView(view);
+    if (widthDp > 0) dialogView.setLayoutParams(new ViewGroup.LayoutParams(dp2px((float) widthDp), ViewGroup.LayoutParams.WRAP_CONTENT));
+    if (widthDp > 0) dialogView.addView(view, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    else dialogView.addView(view);
     dialogView.setPadding(0, 0, 0, 0); // 设置内边距为0
     builder.setView(dialogView);
     Dialog dialog = builder.create();
@@ -113,6 +119,44 @@ public class PublicTools {
     dialog.setCancelable(canCancel);
     dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
     return dialog;
+  }
+
+  public static LinearLayout createSettingGroup(Context context, String title) {
+    LinearLayout group = new LinearLayout(context);
+    group.setOrientation(LinearLayout.VERTICAL);
+    group.setBackgroundResource(R.drawable.setting_group_background);
+    int padding = dp2px(16f);
+    group.setPadding(padding, padding, padding, padding);
+
+    LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+    );
+    groupParams.setMargins(0, 0, 0, dp2px(12f));
+    group.setLayoutParams(groupParams);
+
+    TextView titleView = new TextView(context);
+    titleView.setText(title);
+    titleView.setTextColor(context.getResources().getColor(R.color.onCardBackground));
+    titleView.setTextSize(16);
+    titleView.setTypeface(null, android.graphics.Typeface.BOLD);
+    titleView.setIncludeFontPadding(false);
+    LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+    );
+    titleParams.setMargins(0, 0, 0, dp2px(8f));
+    group.addView(titleView, titleParams);
+    return group;
+  }
+
+  public static void addSettingCard(ViewGroup group, View card) {
+    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+    );
+    params.setMargins(0, 0, 0, dp2px(2f));
+    group.addView(card, params);
   }
 
   public static void showNightModeChanger(Context context, Device device) {
@@ -193,7 +237,7 @@ public class PublicTools {
     DeviceListAdapter deviceListAdapter
   ) {
     ItemAddDeviceBinding itemAddDeviceBinding = ItemAddDeviceBinding.inflate(LayoutInflater.from(context));
-    Dialog dialog = createDialog(context, true, itemAddDeviceBinding.getRoot());
+    Dialog dialog = createDialog(context, true, itemAddDeviceBinding.getRoot(), 760);
     // 设置值
     itemAddDeviceBinding.name.setText(device.name);
     itemAddDeviceBinding.address.setText(device.address);
@@ -285,57 +329,68 @@ public class PublicTools {
     ArrayAdapter<String> maxSizeAdapter = new ArrayAdapter<>(AppData.main, R.layout.item_spinner_item, new String[]{context.getString(R.string.option_max_size_original), "2560", "1920", "1600", "1280", "1024", "800"});
     ArrayAdapter<String> maxFpsAdapter = new ArrayAdapter<>(AppData.main, R.layout.item_spinner_item, maxFpsList);
     ArrayAdapter<String> maxVideoBitAdapter = new ArrayAdapter<>(AppData.main, R.layout.item_spinner_item, maxVideoBitList);
+
+    LinearLayout qualityGroup = createSettingGroup(context, context.getString(R.string.setting_group_quality));
+    LinearLayout startupGroup = createSettingGroup(context, context.getString(R.string.setting_group_startup));
+    LinearLayout audioSyncGroup = createSettingGroup(context, context.getString(R.string.setting_group_audio_sync));
+    LinearLayout codecDisplayGroup = createSettingGroup(context, context.getString(R.string.setting_group_codec_display));
+
     // 添加参数视图
-    fatherLayout.addView(createSpinnerCard(context, context.getString(R.string.option_max_size), context.getString(R.string.option_max_size_detail), String.valueOf(setDefault ? AppData.setting.getDefaultMaxSize() : device.maxSize), maxSizeAdapter, str -> {
+    addSettingCard(qualityGroup, createSpinnerCard(context, context.getString(R.string.option_max_size), context.getString(R.string.option_max_size_detail), String.valueOf(setDefault ? AppData.setting.getDefaultMaxSize() : device.maxSize), maxSizeAdapter, str -> {
       if (str.equals(context.getString(R.string.option_max_size_original))) str = "0";
       if (setDefault) AppData.setting.setDefaultMaxSize(Integer.parseInt(str));
       else device.maxSize = Integer.parseInt(str);
     }).getRoot());
-    fatherLayout.addView(createSpinnerCard(context, context.getString(R.string.option_max_fps), context.getString(R.string.option_max_fps_detail), String.valueOf(setDefault ? AppData.setting.getDefaultMaxFps() : device.maxFps), maxFpsAdapter, str -> {
+    addSettingCard(qualityGroup, createSpinnerCard(context, context.getString(R.string.option_max_fps), context.getString(R.string.option_max_fps_detail), String.valueOf(setDefault ? AppData.setting.getDefaultMaxFps() : device.maxFps), maxFpsAdapter, str -> {
       if (setDefault) AppData.setting.setDefaultMaxFps(Integer.parseInt(str));
       else device.maxFps = Integer.parseInt(str);
     }).getRoot());
-    fatherLayout.addView(createSpinnerCard(context, context.getString(R.string.option_max_video_bit), context.getString(R.string.option_max_video_bit_detail), String.valueOf(setDefault ? AppData.setting.getDefaultMaxVideoBit() : device.maxVideoBit), maxVideoBitAdapter, str -> {
+    addSettingCard(qualityGroup, createSpinnerCard(context, context.getString(R.string.option_max_video_bit), context.getString(R.string.option_max_video_bit_detail), String.valueOf(setDefault ? AppData.setting.getDefaultMaxVideoBit() : device.maxVideoBit), maxVideoBitAdapter, str -> {
       if (setDefault) AppData.setting.setDefaultMaxVideoBit(Integer.parseInt(str));
       else device.maxVideoBit = Integer.parseInt(str);
     }).getRoot());
     if (setDefault) {
-      fatherLayout.addView(createSwitchCard(context, context.getString(R.string.set_display_allow_frame_drop), context.getString(R.string.set_display_allow_frame_drop_detail), AppData.setting.getAllowVideoFrameDrop(), isChecked -> AppData.setting.setAllowVideoFrameDrop(isChecked)).getRoot());
+      addSettingCard(qualityGroup, createSwitchCard(context, context.getString(R.string.set_display_allow_frame_drop), context.getString(R.string.set_display_allow_frame_drop_detail), AppData.setting.getAllowVideoFrameDrop(), isChecked -> AppData.setting.setAllowVideoFrameDrop(isChecked)).getRoot());
     }
     if (device != null) {
       if (device.isNormalDevice())
-        fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_startup_device), context.getString(R.string.option_startup_device_detail), device.connectOnStart, isChecked -> device.connectOnStart = isChecked).getRoot());
+        addSettingCard(startupGroup, createSwitchCard(context, context.getString(R.string.option_startup_device), context.getString(R.string.option_startup_device_detail), device.connectOnStart, isChecked -> device.connectOnStart = isChecked).getRoot());
       else if (device.isLinkDevice())
-        fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_default_usb_device), context.getString(R.string.option_default_usb_device_detail), device.connectOnStart, isChecked -> device.connectOnStart = isChecked).getRoot());
+        addSettingCard(startupGroup, createSwitchCard(context, context.getString(R.string.option_default_usb_device), context.getString(R.string.option_default_usb_device_detail), device.connectOnStart, isChecked -> device.connectOnStart = isChecked).getRoot());
     }
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_is_audio), context.getString(R.string.option_is_audio_detail), setDefault ? AppData.setting.getDefaultIsAudio() : device.isAudio, isChecked -> {
+    addSettingCard(audioSyncGroup, createSwitchCard(context, context.getString(R.string.option_is_audio), context.getString(R.string.option_is_audio_detail), setDefault ? AppData.setting.getDefaultIsAudio() : device.isAudio, isChecked -> {
       if (setDefault) AppData.setting.setDefaultIsAudio(isChecked);
       else device.isAudio = isChecked;
     }).getRoot());
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_clipboard_sync), context.getString(R.string.option_clipboard_sync_detail), setDefault ? AppData.setting.getDefaultClipboardSync() : device.clipboardSync, isChecked -> {
+    addSettingCard(audioSyncGroup, createSwitchCard(context, context.getString(R.string.option_clipboard_sync), context.getString(R.string.option_clipboard_sync_detail), setDefault ? AppData.setting.getDefaultClipboardSync() : device.clipboardSync, isChecked -> {
       if (setDefault) AppData.setting.setDefaultClipboardSync(isChecked);
       else device.clipboardSync = isChecked;
     }).getRoot());
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_night_mode_sync), context.getString(R.string.option_night_mode_sync_detail), setDefault ? AppData.setting.getDefaultNightModeSync() : device.nightModeSync, isChecked -> {
+    addSettingCard(audioSyncGroup, createSwitchCard(context, context.getString(R.string.option_night_mode_sync), context.getString(R.string.option_night_mode_sync_detail), setDefault ? AppData.setting.getDefaultNightModeSync() : device.nightModeSync, isChecked -> {
       if (setDefault) AppData.setting.setDefaultNightModeSync(isChecked);
       else device.nightModeSync = isChecked;
     }).getRoot());
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_use_h265), context.getString(R.string.option_use_h265_detail), setDefault ? AppData.setting.getDefaultUseH265() : device.useH265, isChecked -> {
+    addSettingCard(codecDisplayGroup, createSwitchCard(context, context.getString(R.string.option_use_h265), context.getString(R.string.option_use_h265_detail), setDefault ? AppData.setting.getDefaultUseH265() : device.useH265, isChecked -> {
       if (setDefault) AppData.setting.setDefaultUseH265(isChecked);
       else device.useH265 = isChecked;
     }).getRoot());
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_use_opus), context.getString(R.string.option_use_opus_detail), setDefault ? AppData.setting.getDefaultUseOpus() : device.useOpus, isChecked -> {
+    addSettingCard(codecDisplayGroup, createSwitchCard(context, context.getString(R.string.option_use_opus), context.getString(R.string.option_use_opus_detail), setDefault ? AppData.setting.getDefaultUseOpus() : device.useOpus, isChecked -> {
       if (setDefault) AppData.setting.setDefaultUseOpus(isChecked);
       else device.useOpus = isChecked;
     }).getRoot());
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_default_full), context.getString(R.string.option_default_full_detail), setDefault ? AppData.setting.getDefaultFull() : device.defaultFull, isChecked -> {
+    addSettingCard(codecDisplayGroup, createSwitchCard(context, context.getString(R.string.option_default_full), context.getString(R.string.option_default_full_detail), setDefault ? AppData.setting.getDefaultFull() : device.defaultFull, isChecked -> {
       if (setDefault) AppData.setting.setDefaultFull(isChecked);
       else device.defaultFull = isChecked;
     }).getRoot());
-    fatherLayout.addView(createSwitchCard(context, context.getString(R.string.option_set_resolution), context.getString(R.string.option_set_resolution_detail), setDefault ? AppData.setting.getDefaultSetResolution() : device.setResolution, isChecked -> {
+    addSettingCard(codecDisplayGroup, createSwitchCard(context, context.getString(R.string.option_set_resolution), context.getString(R.string.option_set_resolution_detail), setDefault ? AppData.setting.getDefaultSetResolution() : device.setResolution, isChecked -> {
       if (setDefault) AppData.setting.setDefaultSetResolution(isChecked);
       else device.setResolution = isChecked;
     }).getRoot());
+
+    fatherLayout.addView(qualityGroup);
+    if (startupGroup.getChildCount() > 1) fatherLayout.addView(startupGroup);
+    fatherLayout.addView(audioSyncGroup);
+    fatherLayout.addView(codecDisplayGroup);
   }
 
   // 创建Client加载框

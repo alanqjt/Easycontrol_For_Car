@@ -43,6 +43,17 @@
         android:text="@string/main_poem"
         android:textColor="@color/onBackgroundSecond"
         android:textSize="@dimen/smallSmallFont" />
+
+      <TextView
+        android:id="@+id/main_device_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="5dp"
+        android:layout_marginTop="8dp"
+        android:includeFontPadding="false"
+        android:text="@string/main_device_summary_empty"
+        android:textColor="@color/onBackgroundSecond"
+        android:textSize="@dimen/smallSmallFont" />
     </LinearLayout>
 
     <HorizontalScrollView
@@ -61,20 +72,27 @@
 
         <LinearLayout
           android:id="@+id/button_set_default"
-          android:layout_width="112dp"
+          android:layout_width="134dp"
           android:layout_height="54dp"
           android:layout_marginStart="8dp"
           android:background="@drawable/toolbar_icon_background"
           android:clickable="true"
           android:focusable="true"
           android:gravity="center"
-          android:orientation="vertical"
-          android:paddingStart="10dp"
-          android:paddingEnd="10dp">
+          android:orientation="horizontal"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp">
+
+          <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_tune"
+            android:tint="@color/onBackground" />
 
           <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
             android:ellipsize="end"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
@@ -82,37 +100,32 @@
             android:maxLines="1"
             android:text="@string/set_default"
             android:textColor="@color/onBackground"
-            android:textSize="@dimen/smallSmallFont" />
-
-          <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:text="@string/main_setting_default_detail"
-            android:textColor="@color/onBackgroundSecond"
-            android:textSize="9sp" />
+            android:textSize="@dimen/smallFont" />
         </LinearLayout>
 
         <LinearLayout
           android:id="@+id/button_set_display"
-          android:layout_width="112dp"
+          android:layout_width="134dp"
           android:layout_height="54dp"
           android:layout_marginStart="8dp"
           android:background="@drawable/toolbar_icon_background"
           android:clickable="true"
           android:focusable="true"
           android:gravity="center"
-          android:orientation="vertical"
-          android:paddingStart="10dp"
-          android:paddingEnd="10dp">
+          android:orientation="horizontal"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp">
+
+          <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_display"
+            android:tint="@color/onBackground" />
 
           <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
             android:ellipsize="end"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
@@ -120,37 +133,32 @@
             android:maxLines="1"
             android:text="@string/set_display"
             android:textColor="@color/onBackground"
-            android:textSize="@dimen/smallSmallFont" />
-
-          <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:text="@string/main_setting_display_detail"
-            android:textColor="@color/onBackgroundSecond"
-            android:textSize="9sp" />
+            android:textSize="@dimen/smallFont" />
         </LinearLayout>
 
         <LinearLayout
           android:id="@+id/button_set_other"
-          android:layout_width="112dp"
+          android:layout_width="134dp"
           android:layout_height="54dp"
           android:layout_marginStart="8dp"
           android:background="@drawable/toolbar_icon_background"
           android:clickable="true"
           android:focusable="true"
           android:gravity="center"
-          android:orientation="vertical"
-          android:paddingStart="10dp"
-          android:paddingEnd="10dp">
+          android:orientation="horizontal"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp">
+
+          <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_more_settings"
+            android:tint="@color/onBackground" />
 
           <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
             android:ellipsize="end"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
@@ -158,37 +166,32 @@
             android:maxLines="1"
             android:text="@string/set_other"
             android:textColor="@color/onBackground"
-            android:textSize="@dimen/smallSmallFont" />
-
-          <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:text="@string/main_setting_other_detail"
-            android:textColor="@color/onBackgroundSecond"
-            android:textSize="9sp" />
+            android:textSize="@dimen/smallFont" />
         </LinearLayout>
 
         <LinearLayout
           android:id="@+id/button_set_about"
-          android:layout_width="112dp"
+          android:layout_width="134dp"
           android:layout_height="54dp"
           android:layout_marginStart="8dp"
           android:background="@drawable/toolbar_icon_background"
           android:clickable="true"
           android:focusable="true"
           android:gravity="center"
-          android:orientation="vertical"
-          android:paddingStart="10dp"
-          android:paddingEnd="10dp">
+          android:orientation="horizontal"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp">
+
+          <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_info"
+            android:tint="@color/onBackground" />
 
           <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
             android:ellipsize="end"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
@@ -196,19 +199,7 @@
             android:maxLines="1"
             android:text="@string/set_about"
             android:textColor="@color/onBackground"
-            android:textSize="@dimen/smallSmallFont" />
-
-          <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:text="@string/main_setting_about_detail"
-            android:textColor="@color/onBackgroundSecond"
-            android:textSize="9sp" />
+            android:textSize="@dimen/smallFont" />
         </LinearLayout>
 
         <ImageView
@@ -249,8 +240,12 @@
     android:id="@+id/devices_list"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@drawable/dashboard_panel_background"
     android:clipToPadding="false"
     android:fillViewport="true"
+    android:paddingStart="6dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="6dp"
     android:paddingBottom="60dp">
 
     <GridLayout

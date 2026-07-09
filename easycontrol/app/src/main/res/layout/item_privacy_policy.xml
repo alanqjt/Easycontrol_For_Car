@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="720dp"
+  android:layout_height="wrap_content"
+  android:layout_margin="15dp"
+  android:background="@drawable/background_cron"
+  android:elevation="8dp"
+  android:orientation="vertical"
+  android:paddingStart="22dp"
+  android:paddingTop="20dp"
+  android:paddingEnd="22dp"
+  android:paddingBottom="18dp">
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fontFamily="sans-serif-medium"
+    android:gravity="center"
+    android:includeFontPadding="false"
+    android:text="@string/privacy_policy_title"
+    android:textColor="@color/onCardBackground"
+    android:textSize="@dimen/largeFont" />
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:gravity="center"
+    android:includeFontPadding="false"
+    android:text="@string/privacy_policy_summary"
+    android:textColor="@color/onCardBackgroundSecond"
+    android:textSize="@dimen/smallFont" />
+
+  <ScrollView
+    android:layout_width="match_parent"
+    android:layout_height="320dp"
+    android:layout_marginTop="16dp"
+    android:background="@drawable/background_cron_stroke"
+    android:clipToPadding="false"
+    android:paddingStart="@dimen/cardPadding"
+    android:paddingTop="14dp"
+    android:paddingEnd="@dimen/cardPadding"
+    android:paddingBottom="14dp">
+
+    <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:lineSpacingExtra="4dp"
+      android:text="@string/privacy_policy_content"
+      android:textColor="@color/onCardBackground"
+      android:textSize="@dimen/smallFont" />
+  </ScrollView>
+
+  <GridLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="18dp"
+    android:columnCount="3">
+
+    <Button
+      android:id="@+id/button_cancel"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_columnWeight="9"
+      android:background="@drawable/button_secondary"
+      android:gravity="center"
+      android:text="@string/privacy_policy_cancel"
+      android:textAllCaps="false"
+      android:textColor="@color/onButtonSecond"
+      android:textSize="@dimen/smallFont" />
+
+    <Space android:layout_columnWeight="1" />
+
+    <Button
+      android:id="@+id/button_agree"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_columnWeight="9"
+      android:background="@drawable/button_primary"
+      android:gravity="center"
+      android:text="@string/privacy_policy_agree"
+      android:textAllCaps="false"
+      android:textColor="@color/onButton"
+      android:textSize="@dimen/smallFont" />
+  </GridLayout>
+</LinearLayout>

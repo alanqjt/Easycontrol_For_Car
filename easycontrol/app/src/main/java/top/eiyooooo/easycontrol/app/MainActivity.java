@@ -86,9 +86,12 @@ public class MainActivity extends Activity {
     startBydPanoramaMonitorWithPermission();
     // 设置设备列表适配器、广播接收器
     deviceListAdapter = new DeviceListAdapter(this, mainActivity.devicesGrid);
+    deviceListAdapter.setRenderListener(this::updateDeviceSummary);
+    updateDeviceSummary();
     AppData.myBroadcastReceiver.setDeviceListAdapter(deviceListAdapter);
     connectHelper = new ConnectHelper(this);
     AppData.myBroadcastReceiver.setConnectHelper(connectHelper);
+    if (AppData.setting.getEnableUSB()) AppData.myBroadcastReceiver.checkConnectedUsb(this);
     ConnectHelper.status = true;
     // 设置按钮监听
     setButtonListener();
@@ -154,6 +157,22 @@ public class MainActivity extends Activity {
     if (deviceListAdapter != null) deviceListAdapter.render();
   }
 
+  private void updateDeviceSummary() {
+    if (mainActivity == null) return;
+    int total = DeviceListAdapter.devicesList.size();
+    if (total == 0) {
+      mainActivity.mainDeviceStatus.setText(R.string.main_device_summary_empty);
+      return;
+    }
+    int ready = 0;
+    int checking = 0;
+    for (Device device : DeviceListAdapter.devicesList) {
+      if (device.connection == 1) ready++;
+      else if (device.connection == 0 || device.connection == -1) checking++;
+    }
+    mainActivity.mainDeviceStatus.setText(getString(R.string.main_device_summary, total, ready, checking));
+  }
+
   // 检查权限
   private boolean haveOverlayPermission() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return Settings.canDrawOverlays(this);
@@ -215,8 +234,11 @@ public class MainActivity extends Activity {
     DialogSettingSectionBinding binding = DialogSettingSectionBinding.inflate(LayoutInflater.from(this));
     binding.settingTitle.setText(SettingsPanelHelper.getSectionTitle(this, section));
     binding.settingDetail.setText(SettingsPanelHelper.getSectionDetail(this, section));
+    binding.settingIcon.setImageResource(SettingsPanelHelper.getSectionIcon(section));
     SettingsPanelHelper.populateSection(this, section, binding.settingContent);
-    PublicTools.createDialog(this, true, binding.getRoot()).show();
+    Dialog dialog = PublicTools.createDialog(this, true, binding.getRoot(), SettingsPanelHelper.getSectionDialogWidth(section));
+    binding.settingClose.setOnClickListener(v -> dialog.cancel());
+    dialog.show();
   }
 
   // BYD 全景影像类在非比亚迪系统上不存在，先探测再申请权限，避免普通设备调试时反复弹无效权限。

@@ -10,12 +10,20 @@
   <color name="onCardDivider">#1F6B7785</color>
   <color name="surfaceMuted">#F5F8FA</color>
   <color name="surfacePressed">#E8F2FF</color>
+  <color name="dashboardPanelStart">#F8FBFD</color>
+  <color name="dashboardPanelEnd">#E7EEF4</color>
 
   <!-- 特殊色彩 -->
   <color name="button">#157BFF</color>
   <color name="onButton">#FFFFFF</color>
   <color name="buttonSecond">#E7F1FF</color>
   <color name="onButtonSecond">#1262C8</color>
+  <color name="buttonTransfer">#0F8FB8</color>
+  <color name="buttonTransferPressed">#0C789B</color>
+  <color name="onButtonTransfer">#FFFFFF</color>
+  <color name="statusOnline">#22A06B</color>
+  <color name="statusChecking">#D99A1E</color>
+  <color name="statusOffline">#D95A61</color>
   <color name="alert">#D95A61</color>
   <color name="onAlert">#FFFFFF</color>
   <color name="accentSoft">#D9E9FF</color>

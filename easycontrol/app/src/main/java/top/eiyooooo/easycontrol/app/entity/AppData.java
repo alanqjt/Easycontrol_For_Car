@@ -71,15 +71,15 @@ public class AppData {
     windowManager = (WindowManager) main.getSystemService(Context.WINDOW_SERVICE);
     sensorManager = (SensorManager) main.getSystemService(Context.SENSOR_SERVICE);
     uiModeManager = (UiModeManager) main.getSystemService(Context.UI_MODE_SERVICE);
+    setting = new Setting(main.getSharedPreferences("setting", Context.MODE_PRIVATE));
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
       usageStatsManager = (UsageStatsManager) main.getSystemService(Context.USAGE_STATS_SERVICE);
       uiHandler.postDelayed(() -> EventMonitor.monitorEventsList = dbHelper.getAllMonitorEvents(), 1000);
     }
     nightMode = uiModeManager.getNightMode();
     myBroadcastReceiver.register(main);
-    myBroadcastReceiver.checkConnectedUsb(main);
+    if (setting.getEnableUSB()) myBroadcastReceiver.checkConnectedUsb(main);
     getRealScreenSize(m);
-    setting = new Setting(main.getSharedPreferences("setting", Context.MODE_PRIVATE));
     // 读取密钥文件
     try {
       AdbKeyPair.setAdbBase64(new AdbBase64() {

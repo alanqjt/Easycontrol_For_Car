@@ -12,6 +12,17 @@
   <string name="main_setting_display_detail">Wake/backlight/window</string>
   <string name="main_setting_other_detail">Connect/USB/key</string>
   <string name="main_setting_about_detail">Guide/version/license</string>
+  <string name="dialog_close">Close</string>
+  <string name="main_device_summary_empty">No device found · tap + to add or pair</string>
+  <string name="main_device_summary">Found %1$d · Ready %2$d · Checking %3$d</string>
+  <string name="device_status_ready">Ready</string>
+  <string name="device_status_checking">Checking</string>
+  <string name="device_status_offline">Offline</string>
+  <string name="device_status_pending">Pending</string>
+  <string name="device_type_usb">USB</string>
+  <string name="device_type_wifi">WiFi</string>
+  <string name="device_identity_id">ID %1$s</string>
+  <string name="device_identity_address">%1$s</string>
   <string name="privacy_policy_title">Privacy Policy</string>
   <string name="privacy_policy_summary">Please read and accept the Privacy Policy before using EasyControl.</string>
   <string name="privacy_policy_agree">Agree and continue</string>
@@ -39,6 +50,19 @@
   <string name="set_title_detail">Tune the mirroring experience</string>
   <string name="set_default">Default settings</string>
   <string name="set_display">Display</string>
+  <string name="setting_group_quality">Quality and latency</string>
+  <string name="setting_group_audio_sync">Audio and sync</string>
+  <string name="setting_group_codec_display">Codec and display</string>
+  <string name="setting_group_startup">Startup connection</string>
+  <string name="setting_group_wake_backlight">Wake and backlight</string>
+  <string name="setting_group_window">Window behavior</string>
+  <string name="setting_group_connection_usb">Connection and USB</string>
+  <string name="setting_group_fullscreen_transfer">Fullscreen and app transfer</string>
+  <string name="setting_group_auto_task">Automation</string>
+  <string name="setting_group_tools_security">Tools and keys</string>
+  <string name="setting_group_about_project">Project</string>
+  <string name="setting_group_about_docs">Help and docs</string>
+  <string name="setting_group_about_version">Version and notice</string>
   <string name="set_wake_up_screen_on_connect">Wake up after connection</string>
   <string name="set_wake_up_screen_on_connect_detail">Automatically wake up the controlled end after the connection is successful</string>
   <string name="set_light_off_on_connect">Turn off backlight after connection</string>
@@ -146,12 +170,16 @@
 
   <!-- 设备添加模块 -->
   <string name="add_device_name">Name</string>
+  <string name="add_device_title">Device info</string>
+  <string name="add_device_detail">Fill in the address, then expand advanced options only when needed.</string>
   <string name="add_device_name_hint">Non-null</string>
   <string name="add_device_address">Address:Port</string>
   <string name="add_device_address_hint">IPv4/v6 addresses or domain</string>
   <string name="add_device_specify_app">Transfer specified application (package name)</string>
   <string name="add_device_specify_app_hint">Leave blank for recently-used app transfer</string>
   <string name="add_device_scan">Scan</string>
+  <string name="add_device_scan_address">Scan address</string>
+  <string name="add_device_scan_app">Pick app</string>
   <string name="add_device_scanning">Scanning…</string>
   <string name="add_device_scan_finish">Scan finished</string>
   <string name="add_device_scan_address_finish_none">Scan finished(No device)</string>
@@ -160,7 +188,8 @@
   <string name="add_device_button">OK</string>
 
   <!-- 设备设置模块 -->
-  <string name="set_device_title">Do what◔ ‸◔?</string>
+  <string name="set_device_title">Device actions</string>
+  <string name="set_device_detail">Manage connection, shortcuts, and device settings</string>
   <string name="set_device_button_night_mode">Dark mode</string>
   <string name="night_mode_auto">Auto</string>
   <string name="night_mode_current">Current dark mode: </string>
@@ -177,6 +206,9 @@
   <string name="set_device_button_start_wireless_success">Successfully</string>
   <string name="set_device_button_change">Settings</string>
   <string name="set_device_button_delete">Delete</string>
+  <string name="set_device_delete_confirm_title">Delete this device?</string>
+  <string name="set_device_delete_confirm_message">This removes the saved local configuration and closes the current connection.</string>
+  <string name="set_device_delete_confirm_action">Delete</string>
 
   <!-- 加载中模块 -->
   <string name="loading_text">Loading</string>
