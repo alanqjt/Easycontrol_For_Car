@@ -190,7 +190,8 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
       if (tmp.getVendorId() == usbDevice.getVendorId() && tmp.getProductId() == usbDevice.getProductId()) {
         for (Client client : Client.allClient) if (client.uuid.equals(entry.getKey())) client.release(AppData.main.getString(R.string.error_stream_closed));
         DeviceListAdapter.linkDevices.remove(entry.getKey());
-        Adb.adbMap.remove(entry.getKey());
+        Adb disconnectedAdb = Adb.adbMap.remove(entry.getKey());
+        if (disconnectedAdb != null) disconnectedAdb.close();
         ConnectHelper.needStartDefaultUSB.remove(entry.getKey());
         break;
       }

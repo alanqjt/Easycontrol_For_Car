@@ -1,5 +1,6 @@
 package top.eiyooooo.easycontrol.app.adb;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -26,7 +27,9 @@ public class TcpChannel implements AdbChannel {
 
   @Override
   public void write(ByteBuffer data) throws IOException {
-    outputStream.write(data.array());
+    byte[] bytes = new byte[data.remaining()];
+    data.get(bytes);
+    outputStream.write(bytes);
   }
 
   @Override
@@ -41,7 +44,7 @@ public class TcpChannel implements AdbChannel {
     while (bytesRead < size) {
       int bytesRemaining = size - bytesRead;
       int read = inputStream.read(buffer, bytesRead, bytesRemaining);
-      if (read == -1) break;
+      if (read == -1) throw new EOFException("ADB TCP connection closed after " + bytesRead + " of " + size + " bytes");
       bytesRead += read;
     }
     return ByteBuffer.wrap(buffer);
@@ -51,7 +54,13 @@ public class TcpChannel implements AdbChannel {
   public void close() {
     try {
       outputStream.close();
+    } catch (Exception ignored) {
+    }
+    try {
       inputStream.close();
+    } catch (Exception ignored) {
+    }
+    try {
       socket.close();
     } catch (Exception ignored) {
     }

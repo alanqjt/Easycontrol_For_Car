@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class BufferStream {
-  private boolean isClosed = false;
-  private boolean canWrite;
+  private volatile boolean isClosed = false;
+  private volatile boolean canWrite;
   private final boolean canMultipleSend;
 
   private final Buffer source = new Buffer();
@@ -94,7 +94,7 @@ public class BufferStream {
     underlySocketFunction.flush(this);
   }
 
-  public void close() {
+  public synchronized void close() {
     if (isClosed) return;
     isClosed = true;
     source.close();

@@ -17,6 +17,7 @@ import top.eiyooooo.easycontrol.app.buffer.BufferStream;
  * 打成协议包发送给服务端。
  */
 public class ControlPacket {
+  private static final int MAX_FRAME_SIZE = 32 * 1024 * 1024;
   // 外部传入的写出函数，最终把控制包送到连接里的 BufferStream。
   private final MyFunctionByteBuffer write;
 
@@ -25,8 +26,9 @@ public class ControlPacket {
   }
 
   public byte[] readFrame(BufferStream bufferStream) throws IOException, InterruptedException {
-    // 帧格式一般是：长度 + 数据，所以先读长度再读内容。
-    return bufferStream.readByteArray(bufferStream.readInt()).array();
+    int frameSize = bufferStream.readInt();
+    if (frameSize <= 0 || frameSize > MAX_FRAME_SIZE) throw new IOException("invalid frame size: " + frameSize);
+    return bufferStream.readByteArray(frameSize).array();
   }
 
   // 当前缓存的剪贴板文本，用于去重发送。

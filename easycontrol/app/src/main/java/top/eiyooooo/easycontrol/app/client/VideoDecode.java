@@ -21,12 +21,15 @@ import java.util.concurrent.LinkedBlockingQueue;
  */
 public class VideoDecode {
   private static final int MAX_PENDING_VIDEO_FRAMES = 4;
+  private final Object codecLock = new Object();
+  private volatile boolean released = false;
   // MediaCodec 解码器实例。
   private MediaCodec decodec;
   // 异步回调，负责处理输入和输出缓冲区。
   private final MediaCodec.Callback callback = new MediaCodec.Callback() {
     @Override
     public void onInputBufferAvailable(MediaCodec mediaCodec, int inIndex) {
+      if (released) return;
       // 有空闲输入缓冲区时，先记下来，再尝试喂数据。
       intputBufferQueue.offer(inIndex);
       checkDecode();
@@ -34,12 +37,18 @@ public class VideoDecode {
 
     @Override
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
+      synchronized (codecLock) {
+        if (released) return;
+        try {
       if (AppData.setting.getAllowVideoFrameDrop()) {
         // 低延迟模式直接显示最新解码帧，配合输入侧丢弃旧帧。
         mediaCodec.releaseOutputBuffer(outIndex, true);
       } else {
         // 完整模式保持原始时间戳节奏，避免滑动/动画中间态被跳过。
         mediaCodec.releaseOutputBuffer(outIndex, bufferInfo.presentationTimeUs);
+      }
+        } catch (RuntimeException ignored) {
+        }
       }
     }
 
@@ -58,10 +67,18 @@ public class VideoDecode {
   }
 
   public void release() {
+    synchronized (codecLock) {
+      if (released) return;
+      released = true;
+      intputDataQueue.clear();
+      intputBufferQueue.clear();
+    }
     try {
-      // 停止并释放解码器。
-      decodec.stop();
-      decodec.release();
+      if (decodec != null) decodec.stop();
+    } catch (Exception ignored) {
+    }
+    try {
+      if (decodec != null) decodec.release();
     } catch (Exception ignored) {
     }
   }
@@ -70,6 +87,7 @@ public class VideoDecode {
   private final LinkedBlockingQueue<Integer> intputBufferQueue = new LinkedBlockingQueue<>();
 
   public void decodeIn(byte[] data, long pts) {
+    if (released) return;
     if (AppData.setting.getAllowVideoFrameDrop()) {
       while (intputDataQueue.size() >= MAX_PENDING_VIDEO_FRAMES) {
         intputDataQueue.poll();
@@ -80,16 +98,26 @@ public class VideoDecode {
     checkDecode();
   }
 
-  private synchronized void checkDecode() {
-    // 输入数据和输入缓冲区都准备好后再推进。
-    if (intputDataQueue.isEmpty() || intputBufferQueue.isEmpty()) return;
-    Integer inIndex = intputBufferQueue.poll();
-    Pair<byte[], Long> data = intputDataQueue.poll();
-    // 把压缩视频帧塞进输入缓冲区。
-    decodec.getInputBuffer(inIndex).put(data.first);
-    // 提交给解码器，时间戳保持和服务端一致。
-    decodec.queueInputBuffer(inIndex, 0, data.first.length, data.second, 0);
-    checkDecode();
+  private void checkDecode() {
+    synchronized (codecLock) {
+      if (released) return;
+      try {
+        while (!intputDataQueue.isEmpty() && !intputBufferQueue.isEmpty()) {
+          Integer inIndex = intputBufferQueue.poll();
+          Pair<byte[], Long> data = intputDataQueue.poll();
+          if (inIndex == null || data == null) return;
+          ByteBuffer inputBuffer = decodec.getInputBuffer(inIndex);
+          if (inputBuffer == null || inputBuffer.remaining() < data.first.length) {
+            decodec.queueInputBuffer(inIndex, 0, 0, data.second, 0);
+            continue;
+          }
+          inputBuffer.put(data.first);
+          decodec.queueInputBuffer(inIndex, 0, data.first.length, data.second, 0);
+        }
+      } catch (RuntimeException ignored) {
+        // Codec errors or shutdown may invalidate a buffer asynchronously.
+      }
+    }
   }
 
   // 创建解码器。

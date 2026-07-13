@@ -20,7 +20,6 @@ import java.io.File;
 
 import top.eiyooooo.easycontrol.app.adb.AdbBase64;
 import top.eiyooooo.easycontrol.app.adb.AdbKeyPair;
-import top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor;
 import top.eiyooooo.easycontrol.app.helper.DbHelper;
 import top.eiyooooo.easycontrol.app.helper.EventMonitor;
 import top.eiyooooo.easycontrol.app.helper.MyBroadcastReceiver;
@@ -103,10 +102,6 @@ public class AppData {
   }
 
   public static void release() {
-    try {
-      BydPanoramaMonitor.stop();
-    } catch (Throwable ignored) {
-    }
     myBroadcastReceiver.unRegister(main);
     dbHelper.close();
     activity = null;

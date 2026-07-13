@@ -12,6 +12,9 @@ import android.util.Pair;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import android.view.Surface;
 import android.view.View;
@@ -19,6 +22,8 @@ import android.view.WindowManager;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.io.IOException;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.EventMonitor;
@@ -32,9 +37,9 @@ import top.eiyooooo.easycontrol.app.client.view.ClientView;
 
 public class Client {
   // 状态，0 表示初始化中，1 表示已连接，-1 表示已关闭。
-  private int status = 0;
+  private volatile int status = 0;
   // 当前进程里所有 Client 实例的集合，用于管理多连接场景。
-  public static final ArrayList<Client> allClient = new ArrayList<>();
+  public static final CopyOnWriteArrayList<Client> allClient = new CopyOnWriteArrayList<>();
   // 车机端只保留一个真正播放的音频 owner，避免多投屏时多路 AudioTrack 混在一起。
   private static Client audioOwner;
   private static final Object audioOwnerLock = new Object();
@@ -50,19 +55,25 @@ public class Client {
   private final Thread executeStreamVideoThread = new Thread(this::executeStreamVideo);
   private HandlerThread handlerThread;
   private Handler handler;
+  private final Object lifecycleLock = new Object();
+  private final AtomicBoolean releaseStarted = new AtomicBoolean(false);
+  private boolean startupConnected = false;
+  private final Object mediaLifecycleLock = new Object();
   private VideoDecode videoDecode;
   private AudioDecode audioDecode;
   // 控制包封装器，最终会把二进制协议写入底层通道。
   public final ControlPacket controlPacket = new ControlPacket(this::write);
   public final ClientView clientView;
   public final String uuid;
+  public final String sessionId = UUID.randomUUID().toString();
   // 0 为屏幕镜像模式，1 为应用流转模式。
   public int mode = 0;
   public int displayId = 0;
   private Thread startThread;
   private final Thread loadingTimeOutThread;
   private final Thread keepAliveThread;
-  private static final int timeoutDelay = 5 * 1000;
+  private static final int startupTimeoutDelay = 30 * 1000;
+  private static final int keepAliveTimeoutDelay = 5 * 1000;
   private long lastKeepAliveTime;
   // 0 为单连接，1 为多连接主，2 为多连接从。
   public int multiLink = 0;
@@ -82,8 +93,6 @@ public class Client {
         break;
       }
     }
-    allClient.add(this);
-    if (!EventMonitor.monitorRunning && AppData.setting.getMonitorState()) EventMonitor.startMonitor();
     // 如果指定了转移模式，就先标记为已转移。
     if (mode == 0) specifiedTransferred = true;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -94,9 +103,12 @@ public class Client {
     }
     // 创建客户端界面对象，连接成功后会自动启动后续线程。
     clientView = new ClientView(device, controlPacket, this::changeMode, () -> {
-      status = 1;
-      executeStreamInThread.start();
-      executeStreamVideoThread.start();
+      synchronized (lifecycleLock) {
+        if (releaseStarted.get() || status != 0) return;
+        status = 1;
+        executeStreamInThread.start();
+        executeStreamVideoThread.start();
+      }
       AppData.uiHandler.post(this::executeOtherService);
     }, () -> release(null));
     // 显示加载中弹窗，提示用户正在连接。
@@ -104,10 +116,13 @@ public class Client {
     // 连接超时线程，防止连接卡死。
     loadingTimeOutThread = new Thread(() -> {
       try {
-        Thread.sleep(timeoutDelay);
+        Thread.sleep(startupTimeoutDelay);
+        if (!beginRelease(true)) return;
         if (startThread != null) startThread.interrupt();
-        if (loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
-        release(null);
+        AppData.uiHandler.post(() -> {
+          if (loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
+        });
+        releaseResources(null);
       } catch (InterruptedException ignored) {
       }
     });
@@ -115,7 +130,7 @@ public class Client {
     keepAliveThread = new Thread(() -> {
       lastKeepAliveTime = System.currentTimeMillis();
       while (status != -1) {
-        if (System.currentTimeMillis() - lastKeepAliveTime > timeoutDelay)
+        if (System.currentTimeMillis() - lastKeepAliveTime > keepAliveTimeoutDelay)
           release(AppData.main.getString(R.string.error_stream_closed));
         try {
           Thread.sleep(1500);
@@ -131,7 +146,9 @@ public class Client {
         changeMultiLinkMode(multiLink);
         startServer(device);
         connectServer();
+        loadingTimeOutThread.interrupt();
         AppData.uiHandler.post(() -> {
+          if (releaseStarted.get()) return;
           if (device.nightModeSync) controlPacket.sendNightModeEvent(AppData.nightMode);
           if (AppData.setting.getAlwaysFullMode() || device.defaultFull) clientView.changeToFull();
           else clientView.changeToSmall();
@@ -140,11 +157,15 @@ public class Client {
         L.log(device.uuid, e);
         release(AppData.main.getString(R.string.log_notify));
       } finally {
-        if (!AppData.setting.getAlwaysFullMode() && loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
+        if (!AppData.setting.getAlwaysFullMode()) AppData.uiHandler.post(() -> {
+          if (loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
+        });
         loadingTimeOutThread.interrupt();
-        keepAliveThread.start();
+        if (!releaseStarted.get()) keepAliveThread.start();
       }
     });
+    allClient.add(this);
+    if (!EventMonitor.monitorRunning && AppData.setting.getMonitorState()) EventMonitor.startMonitor();
     if (AppData.setting.getAlwaysFullMode()) PublicTools.logToast(AppData.main.getString(R.string.loading_text));
     else AppData.windowManager.addView(loading.first, loading.second);
     loadingTimeOutThread.start();
@@ -153,17 +174,15 @@ public class Client {
 
   // 连接 ADB，如果同一个设备已经有连接则复用。
   private static Adb connectADB(Device device, UsbDevice usbDevice) throws Exception {
-    if (Adb.adbMap.containsKey(device.uuid)) return Adb.adbMap.get(device.uuid);
-    Adb adb;
-    if (usbDevice == null) adb = new Adb(device.uuid, device.address, AppData.keyPair);
-    else adb = new Adb(device.uuid, usbDevice, AppData.keyPair);
-    Adb.adbMap.put(device.uuid, adb);
-    return adb;
+    return Adb.getOrCreate(device.uuid, () -> {
+      if (usbDevice == null) return new Adb(device.uuid, device.address, AppData.keyPair);
+      return new Adb(device.uuid, usbDevice, AppData.keyPair);
+    });
   }
 
   // 启动服务端 JAR。
   private void startServer(Device device) throws Exception {
-    if (adb.serverShell == null || adb.serverShell.isClosed()) adb.startServer();
+    adb.ensureServerStarted();
     shell = adb.getShell();
     int ScreenMode = (AppData.setting.getTurnOnScreenIfStart() ? 1 : 0) * 1000
             + (AppData.setting.getTurnOffScreenIfStart() ? 1 : 0) * 100
@@ -288,11 +307,22 @@ public class Client {
   private void connectServer() throws Exception {
     Thread.sleep(50);
     for (int i = 0; i < 60; i++) {
+      BufferStream controlStream = null;
+      BufferStream pendingVideoStream = null;
       try {
-        bufferStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
-        videoStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
+        controlStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
+        pendingVideoStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
+        synchronized (lifecycleLock) {
+          if (releaseStarted.get()) throw new InterruptedException("client released while connecting");
+          bufferStream = controlStream;
+          videoStream = pendingVideoStream;
+          startupConnected = true;
+        }
         return;
       } catch (Exception ignored) {
+        if (controlStream != null) controlStream.close();
+        if (pendingVideoStream != null) pendingVideoStream.close();
+        if (releaseStarted.get() || Thread.currentThread().isInterrupted()) throw new InterruptedException("client connection cancelled");
         Thread.sleep(50);
       }
     }
@@ -307,13 +337,25 @@ public class Client {
 
   private void executeStreamVideo() {
     try {
+      if (status != 1 || Thread.currentThread().isInterrupted()) return;
       // 视频流参数
       boolean useH265 = videoStream.readByte() == 1;
       Pair<Integer, Integer> videoSize = new Pair<>(videoStream.readInt(), videoStream.readInt());
       Surface surface = clientView.getSurface();
       Pair<byte[], Long> csd0 = new Pair<>(controlPacket.readFrame(videoStream), videoStream.readLong());
       Pair<byte[], Long> csd1 = useH265 ? null : new Pair<>(controlPacket.readFrame(videoStream), videoStream.readLong());
-      videoDecode = new VideoDecode(videoSize, surface, csd0, csd1, handler);
+      if (status != 1 || Thread.currentThread().isInterrupted()) {
+        surface.release();
+        return;
+      }
+      synchronized (mediaLifecycleLock) {
+        if (status != 1 || Thread.currentThread().isInterrupted()) {
+          surface.release();
+          return;
+        }
+        videoDecode = new VideoDecode(videoSize, surface, csd0, csd1, handler);
+      }
+      surface.release();
       // 循环处理报文
       while (!Thread.interrupted()) {
         videoDecode.decodeIn(controlPacket.readFrame(videoStream), videoStream.readLong());
@@ -337,12 +379,17 @@ public class Client {
             if (!canPlayAudio()) break;
             if (audioDecode != null) audioDecode.decodeIn(audioFrame);
             else {
-              audioDecode = new AudioDecode(useOpus, audioFrame, handler);
+              synchronized (mediaLifecycleLock) {
+                if (status != 1 || Thread.currentThread().isInterrupted()) return;
+                audioDecode = new AudioDecode(useOpus, audioFrame, handler);
+              }
               playAudio(true);
             }
             break;
           case CLIPBOARD_EVENT:
-            controlPacket.nowClipboardText = new String(bufferStream.readByteArray(bufferStream.readInt()).array());
+            int clipboardLength = bufferStream.readInt();
+            if (clipboardLength < 0 || clipboardLength > 5000) throw new IOException("invalid clipboard length: " + clipboardLength);
+            controlPacket.nowClipboardText = new String(bufferStream.readByteArray(clipboardLength).array(), StandardCharsets.UTF_8);
             if (clientView.device.clipboardSync) AppData.clipBoard.setPrimaryClip(ClipData.newPlainText(MIMETYPE_TEXT_PLAIN, controlPacket.nowClipboardText));
             break;
           case CHANGE_SIZE_EVENT:
@@ -378,8 +425,20 @@ public class Client {
   }
 
   public void release(String error) {
-    if (status == -1) return;
-    status = -1;
+    if (!beginRelease(false)) return;
+    releaseResources(error);
+  }
+
+  private boolean beginRelease(boolean initializationTimeout) {
+    synchronized (lifecycleLock) {
+      if (initializationTimeout && (startupConnected || status != 0)) return false;
+      if (!releaseStarted.compareAndSet(false, true)) return false;
+      status = -1;
+      return true;
+    }
+  }
+
+  private void releaseResources(String error) {
     releaseAudioOwner();
     allClient.remove(this);
     if (error != null) {
@@ -392,7 +451,13 @@ public class Client {
         switch (i) {
           case 0:
             if (displayId != 0) {
-              Adb.getStringResponseFromServer(clientView.device, "releaseVirtualDisplay", "id=" + displayId);
+              int releasedDisplayId = displayId;
+              new Thread(() -> {
+                try {
+                  Adb.getStringResponseFromServer(clientView.device, "releaseVirtualDisplay", "id=" + releasedDisplayId);
+                } catch (Exception ignored) {
+                }
+              }).start();
             }
             break;
           case 1:
@@ -420,20 +485,35 @@ public class Client {
             if (!log.isEmpty()) L.logWithoutTime(uuid, log);
             break;
           case 3:
+            if (startThread != null) startThread.interrupt();
+            loadingTimeOutThread.interrupt();
             keepAliveThread.interrupt();
             executeStreamInThread.interrupt();
             executeStreamVideoThread.interrupt();
-            if (handlerThread != null) handlerThread.quit();
             break;
           case 4:
-            AppData.uiHandler.post(() -> clientView.hide(true));
             break;
           case 5:
-            bufferStream.close();
+            try {
+              if (bufferStream != null) bufferStream.close();
+            } catch (Exception ignored) {
+            }
+            try {
+              if (videoStream != null) videoStream.close();
+            } catch (Exception ignored) {
+            }
+            try {
+              if (shell != null) shell.close();
+            } catch (Exception ignored) {
+            }
             break;
           case 6:
-            videoDecode.release();
-            if (audioDecode != null) audioDecode.release();
+            synchronized (mediaLifecycleLock) {
+              if (videoDecode != null) videoDecode.release();
+              if (audioDecode != null) audioDecode.release();
+              if (handlerThread != null) handlerThread.quitSafely();
+            }
+            AppData.uiHandler.post(() -> clientView.hide(true));
             break;
         }
       } catch (Exception ignored) {
@@ -455,10 +535,10 @@ public class Client {
 
   public static ArrayList<String> getAppList(Device device, UsbDevice usbDevice) {
     try {
-      if (Adb.adbMap.get(device.uuid) == null) {
-        if (device.isLinkDevice()) Adb.adbMap.put(device.uuid, new Adb(device.uuid, usbDevice, AppData.keyPair));
-        else Adb.adbMap.put(device.uuid, new Adb(device.uuid, device.address, AppData.keyPair));
-      }
+      Adb.getOrCreate(device.uuid, () -> {
+        if (device.isLinkDevice()) return new Adb(device.uuid, usbDevice, AppData.keyPair);
+        return new Adb(device.uuid, device.address, AppData.keyPair);
+      });
       ArrayList<String> appList = new ArrayList<>();
       String output = Adb.getStringResponseFromServer(device, "getAllAppInfo", "app_type=1");
       String[] allAppInfo = output.split("<!@n@!>");
@@ -494,7 +574,16 @@ public class Client {
     return status == -1 || clientView == null;
   }
 
+  public static Client findBySessionId(String sessionId) {
+    if (sessionId == null) return null;
+    for (Client client : allClient) {
+      if (sessionId.equals(client.sessionId)) return client;
+    }
+    return null;
+  }
+
   public void changeMode(int mode) {
+    if (isClosed()) return;
     if (this.mode == mode) return;
     this.mode = mode;
     clientView.changeSizeLock.set(false);
@@ -511,9 +600,10 @@ public class Client {
     }
     new Thread(() -> {
       try {
-        while (!isStarted()) {
+        while (!isStarted() && !isClosed()) {
           Thread.sleep(1000);
         }
+        if (isClosed()) return;
         controlPacket.sendConfigChangedEvent(-displayId);
         if (mode != 0) appTransfer(clientView.device);
         synchronized (clientView.changeSizeLock) {

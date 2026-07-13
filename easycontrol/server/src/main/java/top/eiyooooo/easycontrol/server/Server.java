@@ -47,10 +47,10 @@ public class Server {
     }
 
     public Server() {
-        // 后台监听输入命令。
-        inputHandler();
         // 初始化系统通道对象。
         this.channel = new Channel();
+        // 后台监听输入命令。
+        inputHandler();
     }
 
     private void inputHandler() {
@@ -61,6 +61,11 @@ public class Server {
                 Scanner scanner = new Scanner(System.in);
                 while (true) {
                     try {
+                        if (!scanner.hasNextLine()) {
+                            scanner.close();
+                            System.exit(0);
+                            return;
+                        }
                         // 一行一条命令，支持 /path?key=value 这种简易格式。
                         String input = scanner.nextLine();
                         L.d("INPUT: " + input);
@@ -88,6 +93,7 @@ public class Server {
             outputStream.writeInt(responseBytes.length);
             outputStream.writeInt(responseBytes.length);
             outputStream.write(responseBytes);
+            outputStream.flush();
         } catch (Exception e) {
             // 输出失败时只记录，不直接中断业务流程。
             L.e("postResponse error", e);
@@ -99,7 +105,7 @@ public class Server {
         HashMap<String, String> request = new HashMap<>();
 
         // 先取路径，再取查询参数。
-        String[] parts = input.split("\\?");
+        String[] parts = input.split("\\?", 2);
         String path = parts[0];
         request.put("request", path);
         if (parts.length == 1) return request;
@@ -108,7 +114,7 @@ public class Server {
         String params = parts[1];
         String[] keyValuePairs = params.split("&");
         for (String pair : keyValuePairs) {
-            String[] keyValue = pair.split("=");
+            String[] keyValue = pair.split("=", 2);
             if (keyValue.length != 2) continue;
             String key = keyValue[0];
             String value = keyValue[1];

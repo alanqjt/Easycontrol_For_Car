@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 
 public class AdbProtocol {
   public static final int ADB_HEADER_LENGTH = 24;
+  public static final int MAX_ADB_PAYLOAD_LENGTH = 16 * 1024 * 1024;
 
   public static final int AUTH_TYPE_TOKEN = 1;
   public static final int AUTH_TYPE_SIGNATURE = 2;
@@ -110,6 +111,7 @@ public class AdbProtocol {
       msg.arg0 = buffer.getInt();
       msg.arg1 = buffer.getInt();
       msg.payloadLength = buffer.getInt();
+      if (msg.payloadLength < 0 || msg.payloadLength > MAX_ADB_PAYLOAD_LENGTH) throw new IOException("invalid ADB payload length: " + msg.payloadLength);
       if (msg.payloadLength > 0) msg.payload = channel.read(msg.payloadLength);
 
       return msg;

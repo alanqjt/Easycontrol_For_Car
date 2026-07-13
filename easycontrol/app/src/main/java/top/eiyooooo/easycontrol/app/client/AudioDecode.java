@@ -23,6 +23,8 @@ import java.util.concurrent.LinkedBlockingQueue;
  * 这里的缓冲区处理方式会直接影响导航播报是否会“吃字”或延迟。
  */
 public class AudioDecode {
+  private final Object codecLock = new Object();
+  private volatile boolean released = false;
   // 每帧约 20ms，24 帧约 480ms；给车机端留一点抗抖空间，避免 AudioTrack underrun 后卡顿/吞字。
   private static final int MAX_PENDING_AUDIO_FRAMES = 24;
   // 车机端音频线程和视频解码经常抢资源，播放缓冲放大到 4 倍比 2 倍更稳。
@@ -33,17 +35,12 @@ public class AudioDecode {
   public AudioTrack audioTrack;
   // 轻量音量增强器，让车机里导航提示音更容易听清。
   public LoudnessEnhancer loudnessEnhancer;
-  // AudioTrack 释放和回调写入必须互斥，否则断开连接时可能写入已释放的底层音频对象。
-  private final Object audioTrackLock = new Object();
   // 当前这路音频是否允许真正播放；非 owner 暂停时仍可解码，但会丢弃 PCM，避免堵住 AudioTrack。
   private volatile boolean shouldPlay = false;
-  // 标记当前解码器是否已经进入释放流程；MediaCodec 异步回调可能晚到，必须靠它挡住旧回调。
-  private volatile boolean released = false;
   // 异步回调：解码器有输入/输出缓冲区时会通过它通知我们。
   private final MediaCodec.Callback callback = new MediaCodec.Callback() {
     @Override
     public void onInputBufferAvailable(@NonNull MediaCodec mediaCodec, int inIndex) {
-      // 释放后到达的旧输入回调直接丢弃，避免再访问已经停止的解码器。
       if (released) return;
       // 先把可写入的输入缓冲区索引保存起来，等压缩音频到达时再配对。
       intputBufferQueue.offer(inIndex);
@@ -53,43 +50,28 @@ public class AudioDecode {
 
     @Override
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
-      try {
-        // 释放后晚到的输出回调不再触碰 AudioTrack，只把 buffer 尽量还给解码器。
+      synchronized (codecLock) {
         if (released) return;
-        // 取出本次输出缓冲区里的 PCM 数据。
-        ByteBuffer outputBuffer = mediaCodec.getOutputBuffer(outIndex);
-        // 只有缓冲区有效、这次确实有音频数据，并且当前连接是音频 owner 时，才写入 AudioTrack。
-        if (outputBuffer != null && bufferInfo.size > 0 && shouldPlay) {
-          // 输出缓冲区可能带有偏移，先移动到有效数据起点。
-          outputBuffer.position(bufferInfo.offset);
-          // 只允许读取本次帧的有效长度，避免把无效尾部一起写进去。
-          outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
-          synchronized (audioTrackLock) {
-            // release() 可能正在等待锁；拿到锁后再确认一次，防止写入已释放的 AudioTrack。
-            if (released || !shouldPlay || audioTrack == null) return;
-            try {
-              if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) recreateAudioTrackLocked();
-              // 阻塞写入并循环补完，避免部分写入导致 PCM 帧缺口；先写一点数据再 play，可减少启动瞬间 underrun。
-              while (outputBuffer.hasRemaining()) {
-                int writeSize = audioTrack.write(outputBuffer, outputBuffer.remaining(), AudioTrack.WRITE_BLOCKING);
-                if (writeSize <= 0) break;
-              }
-              // 确认缓冲里已经有 PCM 后再启动播放，避免 AudioTrack 空跑导致第一句播报被吃掉。
-              if (!released && shouldPlay && audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) audioTrack.play();
-            } catch (IllegalStateException ignored) {
-              // 有些车机会在音频焦点/输出设备切换后让 AudioTrack 底层指针失效；重建后下一帧恢复播放。
-              recreateAudioTrackLocked();
-            }
-          }
-        }
-      } catch (IllegalStateException ignored) {
-        // 车机音频服务或连接释放时可能让 MediaCodec 进入无效状态；忽略旧回调，避免闪退。
-      } finally {
         try {
-          // 当前输出缓冲区已经消费完毕，交还给解码器复用。
-          mediaCodec.releaseOutputBuffer(outIndex, false);
-        } catch (Exception ignored) {
-          // 解码器已经停止/释放时交还 buffer 可能失败，释放流程允许忽略。
+      // 取出本次输出缓冲区里的 PCM 数据。
+      ByteBuffer outputBuffer = decodec.getOutputBuffer(outIndex);
+      // 只有缓冲区有效、这次确实有音频数据，并且当前连接是音频 owner 时，才写入 AudioTrack。
+      if (outputBuffer != null && bufferInfo.size > 0 && shouldPlay) {
+        // 输出缓冲区可能带有偏移，先移动到有效数据起点。
+        outputBuffer.position(bufferInfo.offset);
+        // 只允许读取本次帧的有效长度，避免把无效尾部一起写进去。
+        outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
+        // 非阻塞写入，避免音频策略异常时卡住解码回调和资源释放。
+        while (outputBuffer.hasRemaining()) {
+          int writeSize = audioTrack.write(outputBuffer, outputBuffer.remaining(), AudioTrack.WRITE_NON_BLOCKING);
+          if (writeSize <= 0) break;
+        }
+        // 确认缓冲里已经有 PCM 后再启动播放，避免 AudioTrack 空跑导致第一句播报被吃掉。
+        safeStartAudioTrack();
+      }
+      // 当前输出缓冲区已经消费完毕，交还给解码器复用。
+      decodec.releaseOutputBuffer(outIndex, false);
+        } catch (RuntimeException ignored) {
         }
       }
     }
@@ -106,74 +88,71 @@ public class AudioDecode {
   };
 
   public AudioDecode(boolean useOpus, byte[] csd0, Handler handler) throws IOException {
-    // 先创建 AudioTrack，避免 MediaCodec 异步输出回调早于播放器初始化。
-    setAudioTrack();
-    // 再创建音量增强器，避免车机环境下导航播报过小。
-    setLoudnessEnhancer();
-    // 最后启动解码器，把压缩音频流转成 PCM。
+    // 先创建解码器，把压缩音频流转成 PCM。
     setAudioDecodec(useOpus, csd0, handler);
+    // 再创建 AudioTrack，让 PCM 可以尽快进入系统播放链路。
+    setAudioTrack();
+    // 最后创建音量增强器，避免车机环境下导航播报过小。
+    try {
+      setLoudnessEnhancer();
+    } catch (RuntimeException ignored) {
+      // Some vehicle systems do not provide the LoudnessEnhancer effect.
+      // Audio playback must continue without it instead of closing the client.
+      loudnessEnhancer = null;
+    }
   }
 
   public void release() {
-    // 先阻止后续回调继续写入音频，避免 release 后 AudioTrack.play() 触发底层指针异常。
-    released = true;
-    shouldPlay = false;
-    intputDataQueue.clear();
-    intputBufferQueue.clear();
-    synchronized (audioTrackLock) {
-      try {
-        // 先停止播放，避免后面继续消费旧数据。
-        if (audioTrack != null && audioTrack.getState() == AudioTrack.STATE_INITIALIZED) audioTrack.stop();
-      } catch (Exception ignored) {
-        // 停止失败不影响继续释放底层资源。
-      }
-      try {
-        // 释放播放器占用的底层音频资源。
-        if (audioTrack != null) audioTrack.release();
-        audioTrack = null;
-      } catch (Exception ignored) {
-        // 释放播放器失败时继续释放其它资源。
-      }
-      try {
-        // 关闭音量增强器，避免残留音效处理链路。
-        if (loudnessEnhancer != null) loudnessEnhancer.release();
-        loudnessEnhancer = null;
-      } catch (Exception ignored) {
-        // 释放音效失败不影响解码器释放。
-      }
+    synchronized (codecLock) {
+      if (released) return;
+      released = true;
+      shouldPlay = false;
+      intputDataQueue.clear();
+      intputBufferQueue.clear();
     }
     try {
-      // 停止解码器，结束异步回调。
+      if (audioTrack != null && audioTrack.getState() == AudioTrack.STATE_INITIALIZED) audioTrack.stop();
+    } catch (Exception ignored) {
+    }
+    try {
+      if (audioTrack != null) audioTrack.release();
+    } catch (Exception ignored) {
+    }
+    try {
+      if (loudnessEnhancer != null) loudnessEnhancer.release();
+    } catch (Exception ignored) {
+    }
+    try {
       if (decodec != null) decodec.stop();
     } catch (Exception ignored) {
-      // 停止解码器失败时继续 release。
     }
     try {
-      // 释放解码器实例。
       if (decodec != null) decodec.release();
-      decodec = null;
     } catch (Exception ignored) {
-      // 资源释放阶段允许忽略异常，防止退出流程被打断。
     }
   }
 
   public void playAudio(boolean play) {
-    if (released) return;
-    if (play) {
-      // 只标记允许播放；真正 play 放到第一批 PCM 写入后，降低空缓冲 underrun 的概率。
-      shouldPlay = true;
-    } else {
-      // 暂停时先阻止后续 PCM 写入，再清空旧缓冲，避免恢复后播放过期音频。
-      shouldPlay = false;
-      synchronized (audioTrackLock) {
-        try {
-          // 暂停播放，但保留播放器对象，方便后续快速恢复。
-          if (!released && audioTrack != null && audioTrack.getState() == AudioTrack.STATE_INITIALIZED) audioTrack.pause();
-          // 丢弃已经排队但还没播放的旧音频，尤其适合多投屏 owner 切换场景。
-          if (!released && audioTrack != null && audioTrack.getState() == AudioTrack.STATE_INITIALIZED) audioTrack.flush();
-        } catch (IllegalStateException ignored) {
-          // 音频设备状态异常时只跳过本次暂停/清空，不让 UI 或连接线程闪退。
-        }
+    synchronized (codecLock) {
+      if (released) return;
+      shouldPlay = play;
+      if (play || audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
+      try {
+        if (audioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) audioTrack.pause();
+        audioTrack.flush();
+      } catch (RuntimeException ignored) {
+        // AudioTrack may be invalidated asynchronously by the system audio policy.
+      }
+    }
+  }
+
+  private void safeStartAudioTrack() {
+    synchronized (codecLock) {
+      if (released || !shouldPlay || audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
+      try {
+        if (audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) audioTrack.play();
+      } catch (IllegalStateException ignored) {
+        // AudioTrack may be invalidated asynchronously by a vehicle audio policy change.
       }
     }
   }
@@ -194,28 +173,26 @@ public class AudioDecode {
     checkDecode();
   }
 
-  private synchronized void checkDecode() {
-    if (released) return;
-    // 任意一边还没准备好，就先等待下一次回调。
-    if (intputDataQueue.isEmpty() || intputBufferQueue.isEmpty()) return;
-    // 取出一个可用的输入缓冲区。
-    Integer inIndex = intputBufferQueue.poll();
-    // 取出与之配对的一帧压缩音频数据。
-    byte[] data = intputDataQueue.poll();
-    try {
-      // 把压缩音频写进解码器输入缓冲区。
-      ByteBuffer inputBuffer = decodec.getInputBuffer(inIndex);
-      if (inputBuffer == null) return;
-      inputBuffer.clear();
-      inputBuffer.put(data);
-      // 交回解码器开始解码，这里保持时间戳为 0。
-      decodec.queueInputBuffer(inIndex, 0, data.length, 0, 0);
-    } catch (IllegalStateException ignored) {
-      // 释放流程中 MediaCodec 状态可能已经变化，丢弃这帧即可。
-      return;
+  private void checkDecode() {
+    synchronized (codecLock) {
+      if (released) return;
+      try {
+        while (!intputDataQueue.isEmpty() && !intputBufferQueue.isEmpty()) {
+          Integer inIndex = intputBufferQueue.poll();
+          byte[] data = intputDataQueue.poll();
+          if (inIndex == null || data == null) return;
+          ByteBuffer inputBuffer = decodec.getInputBuffer(inIndex);
+          if (inputBuffer == null || inputBuffer.remaining() < data.length) {
+            decodec.queueInputBuffer(inIndex, 0, 0, 0, 0);
+            continue;
+          }
+          inputBuffer.put(data);
+          decodec.queueInputBuffer(inIndex, 0, data.length, 0, 0);
+        }
+      } catch (RuntimeException ignored) {
+        // Decoder shutdown or a vendor codec error can invalidate an input buffer.
+      }
     }
-    // 如果还有成对的数据和缓冲区，就继续往前推进。
-    checkDecode();
   }
 
   // 创建解码器。
@@ -296,32 +273,6 @@ public class AudioDecode {
   private int getFallbackAudioTrackBufferSize(int sampleRate) {
     // 兜底 200ms PCM：48kHz * 2 声道 * 16bit * 0.2s，避免 getMinBufferSize 异常时创建失败。
     return sampleRate * 2 * 2 / 5;
-  }
-
-  private void recreateAudioTrackLocked() {
-    if (released) return;
-    try {
-      // 先释放旧 AudioTrack，避免音频输出句柄泄漏。
-      if (audioTrack != null) audioTrack.release();
-    } catch (Exception ignored) {
-      // 旧对象可能已经坏掉，释放失败也继续创建新对象。
-    }
-    try {
-      // 音量增强器绑定旧 sessionId，需要随 AudioTrack 一起重建。
-      if (loudnessEnhancer != null) loudnessEnhancer.release();
-    } catch (Exception ignored) {
-      // 旧音效链路释放失败不影响新播放器创建。
-    }
-    audioTrack = null;
-    loudnessEnhancer = null;
-    try {
-      setAudioTrack();
-      setLoudnessEnhancer();
-    } catch (Exception ignored) {
-      // 重建失败时保持静音但不崩溃，后续连接重建会重新创建完整音频链路。
-      audioTrack = null;
-      loudnessEnhancer = null;
-    }
   }
 
   // 创建音量增强器。

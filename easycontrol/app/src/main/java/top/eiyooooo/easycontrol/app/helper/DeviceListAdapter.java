@@ -17,8 +17,8 @@ import android.widget.GridLayout;
 import android.widget.Toast;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -37,7 +37,7 @@ import top.eiyooooo.easycontrol.app.entity.Device;
 public class DeviceListAdapter {
 
   public static final ArrayList<Device> devicesList = new ArrayList<>();
-  public static final HashMap<String, UsbDevice> linkDevices = new HashMap<>();
+  public static final ConcurrentHashMap<String, UsbDevice> linkDevices = new ConcurrentHashMap<>();
   public static boolean startedDefault = false;
 
   private final Context context;
@@ -210,18 +210,15 @@ public class DeviceListAdapter {
 
     checkConnectionExecutor.execute(() -> {
       try {
-        if (!Adb.adbMap.containsKey(device.uuid)) {
+        Adb.getOrCreate(device.uuid, () -> {
           if (device.isLinkDevice()) {
             UsbDevice usbDevice = linkDevices.get(device.uuid);
             if (usbDevice == null) throw new Exception("USB device not ready");
-            Adb adb = new Adb(device.uuid, usbDevice, AppData.keyPair);
-            Adb.adbMap.put(device.uuid, adb);
-          } else {
-            new Adb(device.address, AppData.keyPair);
-            Adb adb = new Adb(device.uuid, device.address, AppData.keyPair);
-            Adb.adbMap.put(device.uuid, adb);
+            return new Adb(device.uuid, usbDevice, AppData.keyPair);
           }
-        }
+          new Adb(device.address, AppData.keyPair);
+          return new Adb(device.uuid, device.address, AppData.keyPair);
+        });
         if (device.connection == 0) device.connection = 1;
       } catch (Exception e) {
         device.connection = 2;
@@ -297,7 +294,8 @@ public class DeviceListAdapter {
               .setNegativeButton(R.string.cancel, null)
               .setPositiveButton(R.string.set_device_delete_confirm_action, (confirmDialog, which) -> {
                 AppData.dbHelper.delete(device);
-                if (Adb.adbMap.containsKey(device.uuid)) Objects.requireNonNull(Adb.adbMap.get(device.uuid)).close();
+                Adb existingAdb = Adb.adbMap.get(device.uuid);
+                if (existingAdb != null) existingAdb.close();
                 update();
                 dialog.cancel();
               })

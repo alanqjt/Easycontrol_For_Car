@@ -94,6 +94,7 @@ public final class ControlPacket {
     public static void handleClipboardEvent() throws IOException {
         // 读取客户端传来的文本剪贴板内容。
         int size = Scrcpy.inputStream.readInt();
+        if (size < 0 || size > 5000) throw new IOException("invalid clipboard length: " + size);
         byte[] textBytes = new byte[size];
         Scrcpy.inputStream.readFully(textBytes);
         String text = new String(textBytes, StandardCharsets.UTF_8);

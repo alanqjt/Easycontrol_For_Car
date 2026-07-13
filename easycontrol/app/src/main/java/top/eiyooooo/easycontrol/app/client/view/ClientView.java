@@ -21,7 +21,6 @@ import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.client.ControlPacket;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
-import top.eiyooooo.easycontrol.app.helper.BydPanoramaMonitor;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -175,24 +174,24 @@ public class ClientView implements TextureView.SurfaceTextureListener {
    */
   public int viewMode;
   public boolean needResumeToSmall = false;
-  private int vehicleHiddenViewMode = 0;
-
   public synchronized void changeToFull() {
-    if (holdForVehicleView(3)) return;
-    hide(false);
-    Intent intent = new Intent(AppData.activity, FullActivity.class);
-    int i = 0;
+    Client target = null;
     for (Client client : Client.allClient) {
-      if (client.clientView == this) break;
-      i++;
+      if (client.clientView == this && !client.isClosed()) {
+        target = client;
+        break;
+      }
     }
-    intent.putExtra("index", i);
-    AppData.activity.startActivity(intent);
+    if (target == null) return;
+    hide(false);
+    Intent intent = new Intent(AppData.main, FullActivity.class);
+    intent.putExtra("sessionId", target.sessionId);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    AppData.main.startActivity(intent);
     viewMode = 3;
   }
 
   public synchronized void changeToSmall() {
-    if (holdForVehicleView(2)) return;
     needResumeToSmall = false;
     if (smallView == null) return;
     hide(false);
@@ -201,7 +200,6 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   }
 
   public synchronized void changeToMini(int mode) {
-    if (holdForVehicleView(1)) return;
     if (miniView == null) return;
     hide(false);
     miniView.show(mode);
@@ -212,33 +210,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     if (fullView != null) fullView.hide();
     if (smallView != null) smallView.hide();
     if (miniView != null) miniView.hide();
-    if (isRelease && surfaceTexture != null) surfaceTexture.release();
-  }
-
-  public synchronized void hideForVehicleView() {
-    if (vehicleHiddenViewMode != 0 || viewMode == 0) return;
-    vehicleHiddenViewMode = viewMode;
-    hide(false);
-  }
-
-  public synchronized void restoreAfterVehicleView() {
-    int targetViewMode = vehicleHiddenViewMode;
-    vehicleHiddenViewMode = 0;
-    if (targetViewMode == 1) changeToMini(0);
-    else if (targetViewMode == 2) changeToSmall();
-    else if (targetViewMode == 3) changeToFull();
-  }
-
-  private boolean holdForVehicleView(int targetViewMode) {
-    try {
-      if (!BydPanoramaMonitor.isVehicleViewActive()) return false;
-    } catch (Throwable ignored) {
-      return false;
+    if (isRelease && surfaceTexture != null) {
+      surfaceTexture.release();
+      surfaceTexture = null;
     }
-    vehicleHiddenViewMode = targetViewMode;
-    viewMode = targetViewMode;
-    hide(false);
-    return true;
   }
 
   public void setFullView(FullActivity fullView) {
@@ -320,7 +295,9 @@ public class ClientView implements TextureView.SurfaceTextureListener {
       int action = event.getActionMasked();
       if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
         int i = event.getActionIndex();
-        pointerDownTime[i] = event.getEventTime();
+        int pointerId = event.getPointerId(i);
+        if (pointerId < 0 || pointerId >= MAX_TRACKED_POINTERS) return true;
+        pointerDownTime[pointerId] = event.getEventTime();
         createTouchPacket(event, MotionEvent.ACTION_DOWN, i);
       } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) createTouchPacket(event, MotionEvent.ACTION_UP, event.getActionIndex());
       else for (int i = 0; i < event.getPointerCount(); i++) createTouchPacket(event, MotionEvent.ACTION_MOVE, i);
@@ -328,25 +305,32 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     });
   }
 
-  private final int[] pointerList = new int[20];
-  private final long[] pointerDownTime = new long[10];
+  private static final int MAX_TRACKED_POINTERS = 32;
+  private final int[] pointerX = new int[MAX_TRACKED_POINTERS];
+  private final int[] pointerY = new int[MAX_TRACKED_POINTERS];
+  private final long[] pointerDownTime = new long[MAX_TRACKED_POINTERS];
 
   private void createTouchPacket(MotionEvent event, int action, int i) {
-    int offsetTime = (int) (event.getEventTime() - pointerDownTime[i]);
+    if (i < 0 || i >= event.getPointerCount()) return;
+    int p = event.getPointerId(i);
+    if (p < 0 || p >= MAX_TRACKED_POINTERS) return;
+    long downTime = pointerDownTime[p] == 0 ? event.getDownTime() : pointerDownTime[p];
+    long elapsed = Math.max(0, event.getEventTime() - downTime);
+    int offsetTime = (int) Math.min(Integer.MAX_VALUE, elapsed);
     int x = (int) event.getX(i);
     int y = (int) event.getY(i);
-    int p = event.getPointerId(i);
     if (action == MotionEvent.ACTION_MOVE) {
       // 减少发送小范围移动(小于4的圆内不做处理)
-      int flipX = pointerList[p] - x;
+      int flipX = pointerX[p] - x;
       if (flipX > -4 && flipX < 4) {
-        int flipY = pointerList[10 + p] - y;
+        int flipY = pointerY[p] - y;
         if (flipY > -4 && flipY < 4) return;
       }
     }
-    pointerList[p] = x;
-    pointerList[10 + p] = y;
+    pointerX[p] = x;
+    pointerY[p] = y;
     controlPacket.sendTouchEvent(action, p, (float) x / surfaceSize.first, (float) y / surfaceSize.second, offsetTime);
+    if (action == MotionEvent.ACTION_UP) pointerDownTime[p] = 0;
   }
 
   // 更改View的形态

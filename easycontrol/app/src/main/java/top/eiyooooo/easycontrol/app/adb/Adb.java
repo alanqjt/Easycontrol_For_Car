@@ -3,13 +3,14 @@ package top.eiyooooo.easycontrol.app.adb;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.usb.UsbDevice;
+import android.os.SystemClock;
 
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import android.util.Pair;
 import top.eiyooooo.easycontrol.app.BuildConfig;
@@ -26,22 +27,29 @@ import top.eiyooooo.easycontrol.app.helper.PublicTools;
  */
 
 public class Adb {
-  public static final HashMap<String, Adb> adbMap = new HashMap<>();
+  public static final ConcurrentHashMap<String, Adb> adbMap = new ConcurrentHashMap<>();
+  private static final ConcurrentHashMap<String, Object> adbCreationLocks = new ConcurrentHashMap<>();
+  private static final long RESPONSE_TIMEOUT_MS = 15_000;
+  private static final long STREAM_OPEN_TIMEOUT_MS = 15_000;
+  private static final long STREAM_CLOSE_TIMEOUT_MS = 60_000;
+  private static final int MAX_SERVER_RESPONSE_SIZE = 16 * 1024 * 1024;
 
   private final AdbChannel channel;
-  private int localIdPool = 1;
+  private final AtomicInteger localIdPool = new AtomicInteger(1);
   private int MAX_DATA = AdbProtocol.CONNECT_MAXDATA;
   private final ConcurrentHashMap<Integer, BufferStream> connectionStreams = new ConcurrentHashMap<>(10);
   private final ConcurrentHashMap<Integer, BufferStream> openStreams = new ConcurrentHashMap<>(5);
   private final Buffer sendBuffer = new Buffer();
+  private final Object serverRequestLock = new Object();
+  private final AtomicBoolean closeStarted = new AtomicBoolean(false);
 
   private final Thread handleInThread = new Thread(this::handleIn);
   private final Thread handleOutThread = new Thread(this::handleOut);
 
   private final String uuid;
   private static final String serverName = "/data/local/tmp/easycontrol_for_car_server_" + BuildConfig.VERSION_CODE + ".jar";
-  public Thread startServerThread = new Thread(this::startServer);
-  public BufferStream serverShell;
+  public volatile Thread startServerThread = new Thread(this::startServer);
+  public volatile BufferStream serverShell;
 
   public Adb(String uuid, String address, AdbKeyPair keyPair) throws Exception {
     this.uuid = uuid;
@@ -81,6 +89,10 @@ public class Adb {
       channel.close();
       throw new Exception("ADB connect error");
     }
+    if (message.arg1 <= 128 || message.arg1 > AdbProtocol.MAX_ADB_PAYLOAD_LENGTH) {
+      channel.close();
+      throw new IOException("invalid ADB max payload: " + message.arg1);
+    }
     MAX_DATA = message.arg1;
     if (uuid == null) {
       channel.close();
@@ -93,20 +105,37 @@ public class Adb {
   }
 
   public final void startServer() {
-    try {
-      if (BuildConfig.ENABLE_DEBUG_FEATURE || !runAdbCmd("ls /data/local/tmp/easycontrol_*").contains(serverName)) {
-        runAdbCmd("rm /data/local/tmp/easycontrol_* ");
-        pushFile(AppData.main.getResources().openRawResource(R.raw.easycontrol_server), serverName);
+    synchronized (serverRequestLock) {
+      try {
+        if (BuildConfig.ENABLE_DEBUG_FEATURE || !runAdbCmd("ls /data/local/tmp/easycontrol_*").contains(serverName)) {
+          runAdbCmd("rm /data/local/tmp/easycontrol_* ");
+          pushFile(AppData.main.getResources().openRawResource(R.raw.easycontrol_server), serverName);
+        }
+        if (serverShell != null) serverShell.close();
+        String cmd = "CLASSPATH=" + serverName + " app_process / top.eiyooooo.easycontrol.server.Server\n";
+        serverShell = getShell();
+        serverShell.write(ByteBuffer.wrap(cmd.getBytes(StandardCharsets.UTF_8)));
+        waitingData(0);
+      } catch (Exception e) {
+        if (serverShell != null) serverShell.close();
+        L.log(uuid, e);
+        PublicTools.logToast(AppData.main.getString(R.string.log_notify));
       }
-      if (serverShell != null) serverShell.close();
-      String cmd = "CLASSPATH=" + serverName + " app_process / top.eiyooooo.easycontrol.server.Server\n";
-      serverShell = getShell();
-      serverShell.write(ByteBuffer.wrap(cmd.getBytes()));
-      waitingData(0);
-    } catch (Exception e) {
-      L.log(uuid, e);
-      PublicTools.logToast(AppData.main.getString(R.string.log_notify));
     }
+  }
+
+  public void ensureServerStarted() throws InterruptedException {
+    Thread serverThread;
+    synchronized (this) {
+      if (closeStarted.get()) throw new InterruptedException("ADB connection is closed");
+      if (!startServerThread.isAlive() && (serverShell == null || serverShell.isClosed())) {
+        startServerThread = new Thread(this::startServer);
+        startServerThread.start();
+      }
+      serverThread = startServerThread;
+    }
+    if (serverThread.isAlive()) serverThread.join();
+    if (serverShell == null || serverShell.isClosed()) throw new InterruptedException("ADB helper server failed to start");
   }
 
   public static String getStringResponseFromServer(Device device, String request, String... args) throws Exception {
@@ -118,13 +147,29 @@ public class Adb {
     String uuid = device.uuid;
     Adb adb = adbMap.get(uuid);
     if (adb == null) throw new Exception("adb not start");
-    if (!adb.startServerThread.isAlive() && (adb.serverShell == null || adb.serverShell.isClosed())) {
-      adb.startServerThread = new Thread(adb::startServer);
-      adb.startServerThread.start();
-    }
-    if (adb.startServerThread.isAlive())
-      adb.startServerThread.join();
+    adb.ensureServerStarted();
     return adb;
+  }
+
+  public static Adb getOrCreate(String uuid, AdbFactory factory) throws Exception {
+    Object creationLock = adbCreationLocks.get(uuid);
+    if (creationLock == null) {
+      Object newLock = new Object();
+      Object existingLock = adbCreationLocks.putIfAbsent(uuid, newLock);
+      creationLock = existingLock == null ? newLock : existingLock;
+    }
+    synchronized (creationLock) {
+      Adb existing = adbMap.get(uuid);
+      if (existing != null && !existing.closeStarted.get()) return existing;
+      if (existing != null) adbMap.remove(uuid, existing);
+      Adb created = factory.create();
+      adbMap.put(uuid, created);
+      return created;
+    }
+  }
+
+  public interface AdbFactory {
+    Adb create() throws Exception;
   }
 
   private String getStringResponse(String request, String... args) throws Exception {
@@ -132,64 +177,92 @@ public class Adb {
   }
 
   private byte[] getResponse(String request, String[] args) throws Exception {
-    StringBuilder sb = new StringBuilder();
-    sb.append("/").append(request).append("?");
-    for (String arg : args) {
-      sb.append(arg).append("&");
-    }
-    sb.deleteCharAt(sb.length() - 1).append("\n");
-    String requestCmd = sb.toString();
+    synchronized (serverRequestLock) {
+      StringBuilder sb = new StringBuilder();
+      sb.append("/").append(request).append("?");
+      for (String arg : args) {
+        sb.append(arg).append("&");
+      }
+      sb.deleteCharAt(sb.length() - 1).append("\n");
+      byte[] requestBytes = sb.toString().getBytes(StandardCharsets.UTF_8);
 
-    serverShell.readAllBytes();
-    serverShell.write(ByteBuffer.wrap(requestCmd.getBytes()));
-    serverShell.readByteArray(requestCmd.length() + 1);
-    waitingData(8);
-    int len1 = serverShell.readInt();
-    int len2 = serverShell.readInt();
-    if (len1 == len2) return serverShell.readByteArray(len1).array();
-    else throw new Exception("bad data format");
+      if (serverShell == null || serverShell.isClosed()) throw new IOException("server shell is closed");
+      serverShell.readAllBytes();
+      serverShell.write(ByteBuffer.wrap(requestBytes));
+      waitingData(requestBytes.length + 1);
+      serverShell.readByteArray(requestBytes.length + 1);
+      waitingData(8);
+      int len1 = serverShell.readInt();
+      int len2 = serverShell.readInt();
+      if (len1 != len2 || len1 < 0 || len1 > MAX_SERVER_RESPONSE_SIZE) throw new IOException("bad server response length");
+      if (len1 == 0) return new byte[0];
+      waitingData(len1);
+      return serverShell.readByteArray(len1).array();
+    }
   }
 
-  ArrayList<Integer> dataReceivingList = new ArrayList<>();
-  private void waitingData(int byteNum) throws InterruptedException {
-    dataReceivingList.clear();
-    while (true) {
-      int newSize = serverShell.getSize();
-      if (newSize == 0) continue;
-      if (byteNum > 0 && newSize > byteNum)
-        break;
-      dataReceivingList.add(newSize);
-      if (dataReceivingList.size() > 1) {
-        int oldSize = dataReceivingList.get(dataReceivingList.size() - 2);
-        if (oldSize == newSize) break;
+  private void waitingData(int byteNum) throws InterruptedException, IOException {
+    long deadline = SystemClock.elapsedRealtime() + RESPONSE_TIMEOUT_MS;
+    int previousSize = -1;
+    int stableChecks = 0;
+    while (SystemClock.elapsedRealtime() < deadline) {
+      BufferStream currentShell = serverShell;
+      if (currentShell == null || currentShell.isClosed()) throw new IOException("server shell is closed");
+      int newSize = currentShell.getSize();
+      if (byteNum > 0 && newSize >= byteNum) return;
+      if (byteNum == 0 && newSize > 0) {
+        if (newSize == previousSize) {
+          if (++stableChecks >= 2) return;
+        } else {
+          previousSize = newSize;
+          stableChecks = 0;
+        }
       }
-      Thread.sleep(400);
+      Thread.sleep(50);
     }
+    throw new IOException("timed out waiting for server data");
   }
 
   private BufferStream open(String destination, boolean canMultipleSend) throws InterruptedException {
-    int localId = localIdPool++ * (canMultipleSend ? 1 : -1);
+    if (closeStarted.get()) throw new InterruptedException("ADB connection is closed");
+    int localId = localIdPool.getAndIncrement() * (canMultipleSend ? 1 : -1);
     sendBuffer.write(AdbProtocol.generateOpen(localId, destination));
-    BufferStream bufferStream;
-    do {
-      synchronized (this) {
-        wait();
+    long deadline = SystemClock.elapsedRealtime() + STREAM_OPEN_TIMEOUT_MS;
+    synchronized (this) {
+      while (true) {
+        BufferStream bufferStream = openStreams.remove(localId);
+        if (bufferStream != null) return bufferStream;
+        if (closeStarted.get()) throw new InterruptedException("ADB connection is closed");
+        long remaining = deadline - SystemClock.elapsedRealtime();
+        if (remaining <= 0) {
+          close();
+          throw new InterruptedException("timed out opening ADB stream: " + destination);
+        }
+        wait(remaining);
       }
-      bufferStream = openStreams.get(localId);
-    } while (bufferStream == null);
-    openStreams.remove(localId);
-    return bufferStream;
+    }
+  }
+
+  private void waitForStreamClose(BufferStream bufferStream) throws InterruptedException {
+    long deadline = SystemClock.elapsedRealtime() + STREAM_CLOSE_TIMEOUT_MS;
+    synchronized (this) {
+      while (!bufferStream.isClosed()) {
+        if (closeStarted.get()) throw new InterruptedException("ADB connection is closed");
+        long remaining = deadline - SystemClock.elapsedRealtime();
+        if (remaining <= 0) {
+          bufferStream.close();
+          throw new InterruptedException("timed out waiting for ADB stream to close");
+        }
+        wait(remaining);
+      }
+    }
   }
 
   public final String restartOnTcpip(int port) throws InterruptedException {
     closing = true;
     BufferStream bufferStream = open("tcpip:" + port, false);
-    do {
-      synchronized (this) {
-        wait();
-      }
-    } while (!bufferStream.isClosed());
-    return new String(bufferStream.readByteArrayBeforeClose().array());
+    waitForStreamClose(bufferStream);
+    return new String(bufferStream.readByteArrayBeforeClose().array(), StandardCharsets.UTF_8);
   }
 
   public final void pushFile(InputStream file, String remotePath) throws Exception {
@@ -202,21 +275,16 @@ public class Adb {
     bufferStream.write(ByteBuffer.wrap(bytes));
     // 发送文件
     byte[] byteArray = new byte[10240 - 8];
-    int len = file.read(byteArray, 0, byteArray.length);
-    do {
+    int len;
+    while ((len = file.read(byteArray, 0, byteArray.length)) > 0) {
       bufferStream.write(AdbProtocol.generateSyncHeader("DATA", len));
       bufferStream.write(ByteBuffer.wrap(byteArray, 0, len));
-      len = file.read(byteArray, 0, byteArray.length);
-    } while (len > 0);
+    }
     file.close();
     // 传输完成，为了方便，文件日期定为2024.1.1 0:0
     bufferStream.write(AdbProtocol.generateSyncHeader("DONE", 1704038400));
     bufferStream.write(AdbProtocol.generateSyncHeader("QUIT", 0));
-    do {
-      synchronized (this) {
-        wait();
-      }
-    } while (!bufferStream.isClosed());
+    waitForStreamClose(bufferStream);
   }
 
   public static Bitmap getRemoteIconByDevice(Device device, String packageName) throws Exception {
@@ -261,23 +329,15 @@ public class Adb {
     } while (bufferStream.getSize() > 0);
     bufferStream.write(AdbProtocol.generateSyncHeader("QUIT", 0));
     byteArrayOutputStream.flush();
-    do {
-      synchronized (this) {
-        wait();
-      }
-    } while (!bufferStream.isClosed());
+    waitForStreamClose(bufferStream);
     runAdbCmd("rm " + path);
     return BitmapFactory.decodeByteArray(byteArrayOutputStream.toByteArray(), 0, byteArrayOutputStream.size());
   }
 
   public final String runAdbCmd(String cmd) throws InterruptedException {
     BufferStream bufferStream = open("shell:" + cmd, true);
-    do {
-      synchronized (this) {
-        wait();
-      }
-    } while (!bufferStream.isClosed());
-    return new String(bufferStream.readByteArrayBeforeClose().array());
+    waitForStreamClose(bufferStream);
+    return new String(bufferStream.readByteArrayBeforeClose().array(), StandardCharsets.UTF_8);
   }
 
   public BufferStream getShell() throws InterruptedException {
@@ -378,11 +438,15 @@ public class Adb {
     });
   }
 
-  boolean closing = false;
+  private volatile boolean closing = false;
 
   public void close() {
-    adbMap.remove(uuid);
+    if (!closeStarted.compareAndSet(false, true)) return;
     closing = true;
+    if (uuid != null) adbMap.remove(uuid, this);
+    synchronized (this) {
+      notifyAll();
+    }
     for (Object bufferStream : connectionStreams.values().toArray()) ((BufferStream) bufferStream).close();
     handleInThread.interrupt();
     handleOutThread.interrupt();

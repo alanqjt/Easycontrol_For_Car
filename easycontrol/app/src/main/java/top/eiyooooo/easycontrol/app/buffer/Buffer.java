@@ -9,10 +9,11 @@ import java.util.concurrent.LinkedBlockingDeque;
  */
 
 public class Buffer {
-  private boolean isClosed = false;
+  private volatile boolean isClosed = false;
   private final LinkedBlockingDeque<ByteBuffer> dataQueue = new LinkedBlockingDeque<>();
 
   public void write(ByteBuffer data) {
+    if (isClosed) return;
     dataQueue.offerLast(data);
   }
 
@@ -48,7 +49,7 @@ public class Buffer {
   }
 
   public ByteBuffer readByteArrayBeforeClose() {
-    ByteBuffer byteBuffer = ByteBuffer.allocate(Math.max(getSize(), 1));
+    ByteBuffer byteBuffer = ByteBuffer.allocate(getSize());
     for (ByteBuffer tmpBuffer : dataQueue) byteBuffer.put(tmpBuffer);
     return byteBuffer;
   }
@@ -66,7 +67,7 @@ public class Buffer {
   public void close() {
     if (isClosed) return;
     isClosed = true;
-    dataQueue.offer(ByteBuffer.allocate(1));
+    dataQueue.offer(ByteBuffer.allocate(0));
   }
 
 }

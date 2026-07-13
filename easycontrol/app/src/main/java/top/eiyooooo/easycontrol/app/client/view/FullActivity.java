@@ -32,8 +32,8 @@ public class FullActivity extends Activity implements SensorEventListener {
     setContentView(fullActivity.getRoot());
     Client client;
     try {
-      client = Client.allClient.get(getIntent().getIntExtra("index", 0));
-      if (client.isClosed()) throw new Exception();
+      client = Client.findBySessionId(getIntent().getStringExtra("sessionId"));
+      if (client == null || client.isClosed()) throw new Exception();
       if (client.clientView.textureView.getParent() != null) client.clientView.hide(false);
     } catch (Exception ignored) {
       finish();
@@ -59,6 +59,7 @@ public class FullActivity extends Activity implements SensorEventListener {
   public Pair<Integer, Integer> fullMaxSize;
 
   private void updateMaxSize() {
+    if (clientView == null) return;
     fullMaxSize = new Pair<>(fullActivity.textureViewLayout.getMeasuredWidth(), fullActivity.textureViewLayout.getMeasuredHeight());
     clientView.updateMaxSize(fullMaxSize);
     if (clientView.mode == 1 && clientView.device.setResolution)
@@ -68,10 +69,11 @@ public class FullActivity extends Activity implements SensorEventListener {
   @Override
   protected void onPause() {
     AppData.sensorManager.unregisterListener(this);
-    if (isChangingConfigurations()) fullActivity.textureViewLayout.removeView(clientView.textureView);
-    else if (clientView != null) {
-      if (AppData.setting.getFullToMiniOnExit()) clientView.changeToMini(2);
-      else clientView.changeToSmall();
+    ClientView currentClientView = clientView;
+    if (currentClientView != null) {
+      if (isChangingConfigurations()) fullActivity.textureViewLayout.removeView(currentClientView.textureView);
+      else if (AppData.setting.getFullToMiniOnExit()) currentClientView.changeToMini(2);
+      else currentClientView.changeToSmall();
     }
     super.onPause();
   }
@@ -88,16 +90,20 @@ public class FullActivity extends Activity implements SensorEventListener {
   }
 
   public void hide() {
-    try {
-      fullActivity.textureViewLayout.removeView(clientView.textureView);
-      clientView.setFullView(null);
-      clientView = null;
-      finish();
-    } catch (Exception ignored) {
+    ClientView currentClientView = clientView;
+    clientView = null;
+    if (currentClientView != null) {
+      try {
+        fullActivity.textureViewLayout.removeView(currentClientView.textureView);
+      } catch (Exception ignored) {
+      }
+      currentClientView.setFullView(null);
     }
+    finish();
   }
 
   public void changeMode(int mode) {
+    if (clientView == null) return;
     fullActivity.buttonSwitch.setVisibility(mode == 0 ? View.VISIBLE : View.INVISIBLE);
     fullActivity.buttonHome.setVisibility(mode == 0 ? View.VISIBLE : View.INVISIBLE);
     if (mode == 0) fullActivity.buttonTransfer.setImageResource(R.drawable.share_out);
