@@ -27,12 +27,14 @@ public final class ControlPacket {
         Scrcpy.writeVideo(byteBuffer);
     }
 
-    public static void sendAudioEvent(ByteBuffer data) throws IOException, ErrnoException {
-        // 音频包格式：类型标记 + 长度 + 数据。
+    public static void sendAudioEvent(int role, boolean tagged, ByteBuffer data) throws IOException, ErrnoException {
+        // v1：类型 + 长度 + 数据；v2：类型 + 角色 + 长度 + 数据。
         int size = data.remaining();
-        if (size < 0) return;
-        ByteBuffer byteBuffer = ByteBuffer.allocate(5 + size);
+        // MediaCodec 可能产生 0 字节的状态输出，不能把它当音频帧发给客户端。
+        if (size <= 0) return;
+        ByteBuffer byteBuffer = ByteBuffer.allocate((tagged ? 6 : 5) + size);
         byteBuffer.put((byte) 2);
+        if (tagged) byteBuffer.put((byte) (role == 1 ? 1 : 0));
         byteBuffer.putInt(size);
         byteBuffer.put(data);
         byteBuffer.flip();

@@ -26,7 +26,16 @@ public class ControlPacket {
   }
 
   public byte[] readFrame(BufferStream bufferStream) throws IOException, InterruptedException {
+    return readFrame(bufferStream, false);
+  }
+
+  public byte[] readAudioFrame(BufferStream bufferStream) throws IOException, InterruptedException {
+    return readFrame(bufferStream, true);
+  }
+
+  private byte[] readFrame(BufferStream bufferStream, boolean allowEmpty) throws IOException, InterruptedException {
     int frameSize = bufferStream.readInt();
+    if (allowEmpty && frameSize == 0) return new byte[0];
     if (frameSize <= 0 || frameSize > MAX_FRAME_SIZE) throw new IOException("invalid frame size: " + frameSize);
     return bufferStream.readByteArray(frameSize).array();
   }

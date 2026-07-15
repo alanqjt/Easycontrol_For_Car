@@ -9,6 +9,7 @@ import android.media.MediaFormat;
 import android.media.audiofx.LoudnessEnhancer;
 import android.os.Build;
 import android.os.Handler;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import top.eiyooooo.easycontrol.app.entity.AppData;
@@ -23,9 +24,16 @@ import java.util.concurrent.LinkedBlockingQueue;
  * 这里的缓冲区处理方式会直接影响导航播报是否会“吃字”或延迟。
  */
 public class AudioDecode {
+  private static final String TAG = "EasycontrolAudio";
+  public static final int ROLE_MEDIA = 0;
+  public static final int ROLE_NAVIGATION = 1;
+  private static final int AUDIO_LOG_INTERVAL_FRAMES = 100;
   private final Object codecLock = new Object();
+  private final int audioRole;
+  private long inputFrameCount;
+  private long outputFrameCount;
   private volatile boolean released = false;
-  // 每帧约 20ms，24 帧约 480ms；给车机端留一点抗抖空间，避免 AudioTrack underrun 后卡顿/吞字。
+  // 媒体允许最多积压约 480ms；导航不丢包，避免播报开头或结尾缺字。
   private static final int MAX_PENDING_AUDIO_FRAMES = 24;
   // 车机端音频线程和视频解码经常抢资源，播放缓冲放大到 4 倍比 2 倍更稳。
   private static final int AUDIO_TRACK_BUFFER_MULTIPLIER = 4;
@@ -51,54 +59,91 @@ public class AudioDecode {
     @Override
     public void onOutputBufferAvailable(@NonNull MediaCodec mediaCodec, int outIndex, @NonNull MediaCodec.BufferInfo bufferInfo) {
       synchronized (codecLock) {
-        if (released) return;
         try {
-      // 取出本次输出缓冲区里的 PCM 数据。
-      ByteBuffer outputBuffer = decodec.getOutputBuffer(outIndex);
-      // 只有缓冲区有效、这次确实有音频数据，并且当前连接是音频 owner 时，才写入 AudioTrack。
-      if (outputBuffer != null && bufferInfo.size > 0 && shouldPlay) {
-        // 输出缓冲区可能带有偏移，先移动到有效数据起点。
-        outputBuffer.position(bufferInfo.offset);
-        // 只允许读取本次帧的有效长度，避免把无效尾部一起写进去。
-        outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
-        // 非阻塞写入，避免音频策略异常时卡住解码回调和资源释放。
-        while (outputBuffer.hasRemaining()) {
-          int writeSize = audioTrack.write(outputBuffer, outputBuffer.remaining(), AudioTrack.WRITE_NON_BLOCKING);
-          if (writeSize <= 0) break;
-        }
-        // 确认缓冲里已经有 PCM 后再启动播放，避免 AudioTrack 空跑导致第一句播报被吃掉。
-        safeStartAudioTrack();
-      }
-      // 当前输出缓冲区已经消费完毕，交还给解码器复用。
-      decodec.releaseOutputBuffer(outIndex, false);
-        } catch (RuntimeException ignored) {
+          if (released) return;
+          // 取出本次输出缓冲区里的 PCM 数据。
+          ByteBuffer outputBuffer = mediaCodec.getOutputBuffer(outIndex);
+          int writtenBytes = 0;
+          if (outputBuffer != null && bufferInfo.size > 0) {
+            int dataStart = bufferInfo.offset;
+            long dataEndLong = (long) dataStart + bufferInfo.size;
+            if (dataStart < 0 || dataEndLong > outputBuffer.capacity()) {
+              throw new IllegalArgumentException("invalid PCM range offset=" + dataStart
+                      + ", size=" + bufferInfo.size
+                      + ", capacity=" + outputBuffer.capacity());
+            }
+
+            ByteBuffer pcm = outputBuffer.duplicate();
+            pcm.clear();
+            pcm.position(dataStart);
+            pcm.limit((int) dataEndLong);
+            outputFrameCount++;
+            // 只有当前连接是音频 owner 时才写入 AudioTrack，非 owner 仍持续解码避免阻塞。
+            if (shouldPlay) {
+              // 导航必须完整写入，避免缓冲区暂满时丢掉播报结尾；媒体保持低延迟非阻塞写入。
+              safeStartAudioTrack();
+              int writeMode = audioRole == ROLE_NAVIGATION ? AudioTrack.WRITE_BLOCKING : AudioTrack.WRITE_NON_BLOCKING;
+              while (pcm.hasRemaining()) {
+                int writeSize = audioTrack.write(pcm, pcm.remaining(), writeMode);
+                if (writeSize <= 0) break;
+                writtenBytes += writeSize;
+              }
+            }
+            if (shouldLogFrame(outputFrameCount)) {
+              Log.i(TAG, "decoded role=" + roleName(audioRole)
+                      + ", frame=" + outputFrameCount
+                      + ", pcmBytes=" + bufferInfo.size
+                      + ", writtenBytes=" + writtenBytes
+                      + ", shouldPlay=" + shouldPlay
+                      + ", trackState=" + audioTrack.getState()
+                      + ", playState=" + audioTrack.getPlayState());
+            }
+          }
+        } catch (RuntimeException e) {
+          Log.e(TAG, "audio output failed role=" + roleName(audioRole), e);
+        } finally {
+          try {
+            mediaCodec.releaseOutputBuffer(outIndex, false);
+          } catch (RuntimeException e) {
+            if (!released) Log.e(TAG, "release output failed role=" + roleName(audioRole), e);
+          }
         }
       }
     }
 
     @Override
     public void onError(@NonNull MediaCodec mediaCodec, @NonNull MediaCodec.CodecException e) {
-      // 这里暂不做额外处理，交给上层统一释放资源和处理重连。
+      String errorCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+              ? "0x" + Integer.toHexString(e.getErrorCode()) : "unavailable-before-api-23";
+      Log.e(TAG, "decoder error role=" + roleName(audioRole)
+              + ", codec=" + codecName(mediaCodec)
+              + ", code=" + errorCode
+              + ", recoverable=" + e.isRecoverable()
+              + ", transient=" + e.isTransient()
+              + ", diagnostic=" + e.getDiagnosticInfo(), e);
     }
 
     @Override
     public void onOutputFormatChanged(@NonNull MediaCodec mediaCodec, @NonNull MediaFormat format) {
-      // 输出格式在创建解码器时已经固定为 PCM，这里不需要额外处理。
+      Log.i(TAG, "output format role=" + roleName(audioRole) + ", format=" + format);
     }
   };
 
-  public AudioDecode(boolean useOpus, byte[] csd0, Handler handler) throws IOException {
+  public AudioDecode(boolean useOpus, byte[] csd0, Handler handler, int audioRole) throws IOException {
+    this.audioRole = audioRole == ROLE_NAVIGATION ? ROLE_NAVIGATION : ROLE_MEDIA;
     // 先创建解码器，把压缩音频流转成 PCM。
     setAudioDecodec(useOpus, csd0, handler);
     // 再创建 AudioTrack，让 PCM 可以尽快进入系统播放链路。
     setAudioTrack();
     // 最后创建音量增强器，避免车机环境下导航播报过小。
-    try {
-      setLoudnessEnhancer();
-    } catch (RuntimeException ignored) {
-      // Some vehicle systems do not provide the LoudnessEnhancer effect.
-      // Audio playback must continue without it instead of closing the client.
-      loudnessEnhancer = null;
+    if (this.audioRole == ROLE_NAVIGATION) {
+      try {
+        setLoudnessEnhancer();
+      } catch (RuntimeException ignored) {
+        // Some vehicle systems do not provide the LoudnessEnhancer effect.
+        // Audio playback must continue without it instead of closing the client.
+        loudnessEnhancer = null;
+      }
     }
   }
 
@@ -136,7 +181,12 @@ public class AudioDecode {
     synchronized (codecLock) {
       if (released) return;
       shouldPlay = play;
-      if (play || audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
+      if (play) {
+        // 导航轨提前进入 PLAYING 并在两次播报之间保持常驻，首帧到达时无需重新启动音频路由。
+        if (audioRole == ROLE_NAVIGATION) safeStartAudioTrack();
+        return;
+      }
+      if (audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
       try {
         if (audioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) audioTrack.pause();
         audioTrack.flush();
@@ -163,9 +213,18 @@ public class AudioDecode {
   private final LinkedBlockingQueue<Integer> intputBufferQueue = new LinkedBlockingQueue<>();
 
   public void decodeIn(byte[] data) {
-    if (released) return;
-    while (intputDataQueue.size() >= MAX_PENDING_AUDIO_FRAMES) {
-      intputDataQueue.poll();
+    if (released || data == null || data.length == 0) return;
+    if (audioRole != ROLE_NAVIGATION) {
+      while (intputDataQueue.size() >= MAX_PENDING_AUDIO_FRAMES) {
+        intputDataQueue.poll();
+      }
+    }
+    inputFrameCount++;
+    if (shouldLogFrame(inputFrameCount)) {
+      Log.i(TAG, "compressed input role=" + roleName(audioRole)
+              + ", frame=" + inputFrameCount
+              + ", bytes=" + data.length
+              + ", head=" + hexPrefix(data, 12));
     }
     // 收到一帧压缩音频后先入队，等有空闲输入缓冲区时再配对。
     intputDataQueue.offer(data);
@@ -182,21 +241,33 @@ public class AudioDecode {
           byte[] data = intputDataQueue.poll();
           if (inIndex == null || data == null) return;
           ByteBuffer inputBuffer = decodec.getInputBuffer(inIndex);
-          if (inputBuffer == null || inputBuffer.remaining() < data.length) {
+          if (inputBuffer == null) {
+            decodec.queueInputBuffer(inIndex, 0, 0, 0, 0);
+            continue;
+          }
+          inputBuffer.clear();
+          if (inputBuffer.remaining() < data.length) {
+            Log.e(TAG, "compressed frame too large role=" + roleName(audioRole)
+                    + ", bytes=" + data.length
+                    + ", capacity=" + inputBuffer.remaining());
             decodec.queueInputBuffer(inIndex, 0, 0, 0, 0);
             continue;
           }
           inputBuffer.put(data);
           decodec.queueInputBuffer(inIndex, 0, data.length, 0, 0);
         }
-      } catch (RuntimeException ignored) {
-        // Decoder shutdown or a vendor codec error can invalidate an input buffer.
+      } catch (RuntimeException e) {
+        if (!released) Log.e(TAG, "queue input failed role=" + roleName(audioRole), e);
       }
     }
   }
 
   // 创建解码器。
   private void setAudioDecodec(boolean useOpus, byte[] csd0, Handler handler) throws IOException {
+    if (csd0 == null || csd0.length == 0) throw new IOException("empty audio csd-0");
+    if (useOpus && !startsWith(csd0, "OpusHead")) {
+      throw new IOException("invalid Opus csd-0: bytes=" + csd0.length + ", head=" + hexPrefix(csd0, 12));
+    }
     // 根据配置决定解码 AAC 还是 OPUS。
     String codecMime = useOpus ? MediaFormat.MIMETYPE_AUDIO_OPUS : MediaFormat.MIMETYPE_AUDIO_AAC;
     // 创建对应类型的解码器实例。
@@ -213,10 +284,14 @@ public class AudioDecode {
     decodecFormat.setByteBuffer("csd-0", ByteBuffer.wrap(csd0));
     if (useOpus) {
       // OPUS 需要额外的 csd-1 / csd-2 占位数据，这里按固定空字节补齐。
-      ByteBuffer csd12ByteBuffer = ByteBuffer.wrap(new byte[]{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
-      decodecFormat.setByteBuffer("csd-1", csd12ByteBuffer);
-      decodecFormat.setByteBuffer("csd-2", csd12ByteBuffer);
+      decodecFormat.setByteBuffer("csd-1", ByteBuffer.wrap(new byte[8]));
+      decodecFormat.setByteBuffer("csd-2", ByteBuffer.wrap(new byte[8]));
     }
+    Log.i(TAG, "decoder configure role=" + roleName(audioRole)
+            + ", codec=" + codecName(decodec)
+            + ", mime=" + codecMime
+            + ", csdBytes=" + csd0.length
+            + ", csdHead=" + hexPrefix(csd0, 12));
     // 使用异步回调方式解码，尽量减少主线程等待。
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       decodec.setCallback(callback, handler);
@@ -240,13 +315,17 @@ public class AudioDecode {
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
       // Android 6.0 及以上使用 Builder，便于精细控制播放属性。
       AudioTrack.Builder audioTrackBuild = new AudioTrack.Builder();
-      // 声明这一路声音的用途，导航播报更贴近车机场景。
+      // 先兼容用户指定的 legacy stream，再用明确 usage 覆盖用途，保证导航和媒体进入不同车机通道。
       AudioAttributes.Builder audioAttributesBulider = new AudioAttributes.Builder();
-      audioAttributesBulider.setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE);
-      audioAttributesBulider.setContentType(AudioAttributes.CONTENT_TYPE_UNKNOWN);
-      // 允许用户通过设置覆盖 legacy stream type，兼容不同车机音频策略。
       int audioChannel = AppData.setting.getAudioChannel();
       if (audioChannel != 0) audioAttributesBulider.setLegacyStreamType(audioChannel);
+      if (audioRole == ROLE_NAVIGATION) {
+        audioAttributesBulider.setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE);
+        audioAttributesBulider.setContentType(AudioAttributes.CONTENT_TYPE_SPEECH);
+      } else {
+        audioAttributesBulider.setUsage(AudioAttributes.USAGE_MEDIA);
+        audioAttributesBulider.setContentType(AudioAttributes.CONTENT_TYPE_MUSIC);
+      }
       // 音频格式必须和解码后的 PCM 一致，避免播放端再做额外转换。
       AudioFormat.Builder audioFormat = new AudioFormat.Builder();
       audioFormat.setEncoding(AudioFormat.ENCODING_PCM_16BIT);
@@ -268,6 +347,47 @@ public class AudioDecode {
       // 老版本系统退回到传统构造方式，保持兼容性。
       audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
     }
+    Log.i(TAG, "AudioTrack ready role=" + roleName(audioRole)
+            + ", state=" + audioTrack.getState()
+            + ", sessionId=" + audioTrack.getAudioSessionId()
+            + ", bufferBytes=" + bufferSize);
+  }
+
+  private static boolean shouldLogFrame(long frame) {
+    return frame <= 3 || frame % AUDIO_LOG_INTERVAL_FRAMES == 0;
+  }
+
+  private static String roleName(int role) {
+    return role == ROLE_NAVIGATION ? "navigation" : "media";
+  }
+
+  private static String codecName(MediaCodec codec) {
+    try {
+      return codec == null ? "null" : codec.getName();
+    } catch (RuntimeException ignored) {
+      return "unavailable";
+    }
+  }
+
+  private static boolean startsWith(byte[] data, String value) {
+    byte[] prefix = value.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    if (data.length < prefix.length) return false;
+    for (int i = 0; i < prefix.length; i++) {
+      if (data[i] != prefix[i]) return false;
+    }
+    return true;
+  }
+
+  private static String hexPrefix(byte[] data, int maxBytes) {
+    int count = Math.min(data.length, maxBytes);
+    StringBuilder result = new StringBuilder(count * 3);
+    for (int i = 0; i < count; i++) {
+      int value = data[i] & 0xff;
+      if (i > 0) result.append(' ');
+      if (value < 0x10) result.append('0');
+      result.append(Integer.toHexString(value));
+    }
+    return result.toString();
   }
 
   private int getFallbackAudioTrackBufferSize(int sampleRate) {

@@ -51,15 +51,11 @@ public final class Scrcpy {
             // 先建立本地 socket 连接，再启动编码和控制线程。
             connectClient();
             // 初始化音频和视频编码子服务。
-            boolean canAudio = AudioEncode.init();
+            AudioEncode.init();
             VideoEncode.init();
             // 启动数据流线程。
             ArrayList<Thread> threads = new ArrayList<>();
             threads.add(new Thread(Scrcpy::executeVideoOut));
-            if (canAudio) {
-                threads.add(new Thread(Scrcpy::executeAudioIn));
-                threads.add(new Thread(Scrcpy::executeAudioOut));
-            }
             threads.add(new Thread(Scrcpy::executeControlIn));
             for (Thread thread : threads) thread.setPriority(Thread.MAX_PRIORITY);
             for (Thread thread : threads) thread.start();
@@ -140,20 +136,6 @@ public final class Scrcpy {
                 }
             }
         } catch (Exception e) {
-            errorClose(e);
-        }
-    }
-
-    private static void executeAudioIn() {
-        // 音频输入线程：持续把麦克风/系统混音数据送进编码器。
-        while (!Thread.interrupted()) AudioEncode.encodeIn();
-    }
-
-    private static void executeAudioOut() {
-        try {
-            // 音频输出线程：持续取编码结果并发送到客户端。
-            while (!Thread.interrupted()) AudioEncode.encodeOut();
-        } catch (IOException | ErrnoException e) {
             errorClose(e);
         }
     }

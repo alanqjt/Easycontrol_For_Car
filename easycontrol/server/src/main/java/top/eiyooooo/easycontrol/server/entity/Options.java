@@ -16,6 +16,16 @@ public final class Options {
     public static boolean useH265 = true;
     public static boolean useOpus = true;
     public static int mirrorMode = 0;
+    // 大于 0 时只采集该 UID 的播放音频；-1 保持原来的整机混音采集。
+    public static int audioUid = -1;
+    // UID 定向采集不可用时，是否允许退回整机混音。
+    public static boolean audioFallback = true;
+    // 1 为旧版单路音频帧，2 为每帧携带 navigation/media 角色的新协议。
+    public static int audioProtocol = 1;
+    // 单路应用流转的音频角色：0 为媒体，1 为导航。
+    public static int audioRole = 0;
+    // 直接投屏时按导航 UID 拆成导航、媒体两路音频。
+    public static boolean audioSplit = false;
 
     public static void parse(String... args) {
         for (String arg : args) {
@@ -62,8 +72,22 @@ public final class Options {
                     }
                     mirrorMode = Integer.parseInt(value);
                     break;
+                case "audioUid":
+                    audioUid = Integer.parseInt(value);
+                    break;
+                case "audioFallback":
+                    audioFallback = Integer.parseInt(value) == 1;
+                    break;
+                case "audioProtocol":
+                    audioProtocol = Integer.parseInt(value);
+                    break;
+                case "audioRole":
+                    audioRole = Integer.parseInt(value) == 1 ? 1 : 0;
+                    break;
+                case "audioSplit":
+                    audioSplit = Integer.parseInt(value) == 1;
+                    break;
             }
         }
     }
 }
-

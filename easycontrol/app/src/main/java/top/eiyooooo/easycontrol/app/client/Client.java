@@ -3,15 +3,18 @@ package top.eiyooooo.easycontrol.app.client;
 import static android.content.ClipDescription.MIMETYPE_TEXT_PLAIN;
 
 import android.content.ClipData;
+import android.content.pm.ApplicationInfo;
 import android.hardware.usb.UsbDevice;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.util.Log;
 import android.util.Pair;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -36,13 +39,19 @@ import top.eiyooooo.easycontrol.app.buffer.BufferStream;
 import top.eiyooooo.easycontrol.app.client.view.ClientView;
 
 public class Client {
+  private static final String AUDIO_LOG_TAG = "EasycontrolAudio";
   // 状态，0 表示初始化中，1 表示已连接，-1 表示已关闭。
   private volatile int status = 0;
   // 当前进程里所有 Client 实例的集合，用于管理多连接场景。
   public static final CopyOnWriteArrayList<Client> allClient = new CopyOnWriteArrayList<>();
-  // 车机端只保留一个真正播放的音频 owner，避免多投屏时多路 AudioTrack 混在一起。
-  private static Client audioOwner;
+  // 导航和媒体各保留一个 owner：同类不重复播放，两类可以同时输出到不同车机音频通道。
+  private static final Client[] audioOwners = new Client[2];
   private static final Object audioOwnerLock = new Object();
+  private static final Object multiLinkLock = new Object();
+  private static final int AUDIO_OWNER_PRIORITY_NONE = Integer.MIN_VALUE;
+  private static final int AUDIO_OWNER_PRIORITY_PRIMARY = 100;
+  private static final int AUDIO_OWNER_PRIORITY_DIRECT_MIRROR = 200;
+  private static final int AUDIO_OWNER_PRIORITY_UID_FLOW = 300;
 
   // 连接相关对象。
   public Adb adb;
@@ -55,12 +64,15 @@ public class Client {
   private final Thread executeStreamVideoThread = new Thread(this::executeStreamVideo);
   private HandlerThread handlerThread;
   private Handler handler;
+  private final HandlerThread[] audioHandlerThreads = new HandlerThread[2];
+  private final Handler[] audioHandlers = new Handler[2];
   private final Object lifecycleLock = new Object();
   private final AtomicBoolean releaseStarted = new AtomicBoolean(false);
   private boolean startupConnected = false;
   private final Object mediaLifecycleLock = new Object();
   private VideoDecode videoDecode;
-  private AudioDecode audioDecode;
+  // 同一个直接投屏 Client 可以同时承载媒体、导航两个独立解码器。
+  private final AudioDecode[] audioDecodes = new AudioDecode[2];
   // 控制包封装器，最终会把二进制协议写入底层通道。
   public final ControlPacket controlPacket = new ControlPacket(this::write);
   public final ClientView clientView;
@@ -69,6 +81,12 @@ public class Client {
   // 0 为屏幕镜像模式，1 为应用流转模式。
   public int mode = 0;
   public int displayId = 0;
+  // 本次应用流转对应的远端任务信息，也是 UID 定向音频采集的依据。
+  private String flowPackageName = "";
+  private int flowUid = -1;
+  private int flowCategory = ApplicationInfo.CATEGORY_UNDEFINED;
+  private int audioRole = AudioDecode.ROLE_MEDIA;
+  private boolean uidFilteredAudio;
   private Thread startThread;
   private final Thread loadingTimeOutThread;
   private final Thread keepAliveThread;
@@ -85,14 +103,6 @@ public class Client {
   public Client(Device device, UsbDevice usbDevice, int mode) {
     // 初始化设备标识，后续多连接判断要优先使用它。
     uuid = device.uuid;
-    // 如果当前设备已经有一个 Client 在跑，多连接时需要重新标记主从关系。
-    for (Client client : allClient) {
-      if (client.isSamePhysicalDevice(device)) {
-        if (client.multiLink == 0) client.changeMultiLinkMode(1);
-        this.multiLink = 2;
-        break;
-      }
-    }
     // 如果指定了转移模式，就先标记为已转移。
     if (mode == 0) specifiedTransferred = true;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -100,6 +110,13 @@ public class Client {
       handlerThread = new HandlerThread("easycontrol_mediacodec");
       handlerThread.start();
       handler = new Handler(handlerThread.getLooper());
+      // 两种角色各用独立回调线程，导航阻塞完整写入时不会拖住媒体解码。
+      for (int role = 0; role < audioHandlerThreads.length; role++) {
+        audioHandlerThreads[role] = new HandlerThread(role == AudioDecode.ROLE_NAVIGATION
+                ? "easycontrol_audio_navigation" : "easycontrol_audio_media");
+        audioHandlerThreads[role].start();
+        audioHandlers[role] = new Handler(audioHandlerThreads[role].getLooper());
+      }
     }
     // 创建客户端界面对象，连接成功后会自动启动后续线程。
     clientView = new ClientView(device, controlPacket, this::changeMode, () -> {
@@ -164,7 +181,10 @@ public class Client {
         if (!releaseStarted.get()) keepAliveThread.start();
       }
     });
-    allClient.add(this);
+    synchronized (multiLinkLock) {
+      allClient.add(this);
+      rebalanceMultiLinkModesLocked(device);
+    }
     if (!EventMonitor.monitorRunning && AppData.setting.getMonitorState()) EventMonitor.startMonitor();
     if (AppData.setting.getAlwaysFullMode()) PublicTools.logToast(AppData.main.getString(R.string.loading_text));
     else AppData.windowManager.addView(loading.first, loading.second);
@@ -183,6 +203,7 @@ public class Client {
   // 启动服务端 JAR。
   private void startServer(Device device) throws Exception {
     adb.ensureServerStarted();
+    resolveFlowAudioTarget(device);
     shell = adb.getShell();
     int ScreenMode = (AppData.setting.getTurnOnScreenIfStart() ? 1 : 0) * 1000
             + (AppData.setting.getTurnOffScreenIfStart() ? 1 : 0) * 100
@@ -190,7 +211,22 @@ public class Client {
             + (AppData.setting.getTurnOnScreenIfStop() ? 1 : 0);
     StringBuilder cmd = new StringBuilder();
     cmd.append("app_process -Djava.class.path=").append(serverName).append(" / top.eiyooooo.easycontrol.server.Scrcpy");
-    if (!shouldStartServerAudio(device)) cmd.append(" isAudio=0");
+    boolean startAudio = shouldStartServerAudio(device);
+    Log.i(AUDIO_LOG_TAG, "audio start decision " + audioClientDescription()
+            + ", deviceAudio=" + device.isAudio
+            + ", enabled=" + startAudio);
+    if (!startAudio) cmd.append(" isAudio=0");
+    else {
+      // v2 音频帧携带角色；直接投屏可在同一个 socket 内交错传输导航和媒体帧。
+      cmd.append(" audioProtocol=2");
+      cmd.append(" audioRole=").append(audioRole);
+      if (mode == 0) cmd.append(" audioSplit=1");
+      if (uidFilteredAudio) {
+        cmd.append(" audioUid=").append(flowUid);
+        // 只有第一路连接可回退整机混音，防止厂商不支持 UID AudioPolicy 时出现多路重复声音。
+        cmd.append(" audioFallback=").append(multiLink == 2 ? 0 : 1);
+      }
+    }
     if (device.maxSize != 1600) cmd.append(" maxSize=").append(device.maxSize);
     if (device.maxFps != 60) cmd.append(" maxFps=").append(device.maxFps);
     if (device.maxVideoBit != 4) cmd.append(" maxVideoBit=").append(device.maxVideoBit);
@@ -205,6 +241,60 @@ public class Client {
     logger();
   }
 
+  private void resolveFlowAudioTarget(Device device) {
+    flowPackageName = "";
+    flowUid = -1;
+    flowCategory = ApplicationInfo.CATEGORY_UNDEFINED;
+    audioRole = AudioDecode.ROLE_MEDIA;
+    uidFilteredAudio = false;
+    if (!device.isAudio || mode != 1) return;
+
+    try {
+      String packageName = device.specified_app == null ? "" : device.specified_app.trim();
+      JSONObject appInfo;
+      if (!packageName.isEmpty()) {
+        appInfo = new JSONObject(Adb.getStringResponseFromServer(device, "getAppAudioInfo", "package=" + packageName));
+      } else {
+        appInfo = findRecentFlowTask(device);
+        packageName = appInfo.optString("packageName", appInfo.optString("topPackage", ""));
+      }
+
+      flowPackageName = packageName;
+      flowUid = appInfo.optInt("uid", -1);
+      flowCategory = appInfo.optInt("category", ApplicationInfo.CATEGORY_UNDEFINED);
+      audioRole = isNavigationApp(flowPackageName, flowCategory) ? AudioDecode.ROLE_NAVIGATION : AudioDecode.ROLE_MEDIA;
+      uidFilteredAudio = flowUid > 0 && !flowPackageName.isEmpty();
+      L.log(uuid, "flow audio target package=" + flowPackageName
+              + ", uid=" + flowUid
+              + ", displayId=" + displayId
+              + ", role=" + (audioRole == AudioDecode.ROLE_NAVIGATION ? "navigation" : "media"));
+    } catch (Exception e) {
+      L.log(uuid, "flow audio target unavailable: " + e.getMessage());
+    }
+  }
+
+  private JSONObject findRecentFlowTask(Device device) throws Exception {
+    JSONObject tasks = new JSONObject(Adb.getStringResponseFromServer(device, "getRecentTasks"));
+    JSONArray data = tasks.getJSONArray("data");
+    for (int i = 0; i < data.length(); i++) {
+      JSONObject task = data.getJSONObject(i);
+      String packageName = task.optString("packageName", task.optString("topPackage", ""));
+      if (task.optInt("taskId", task.optInt("id", 0)) > 0 && !packageName.isEmpty()) return task;
+    }
+    throw new IllegalStateException("no recent application task");
+  }
+
+  private boolean isNavigationApp(String packageName, int category) {
+    if (category == ApplicationInfo.CATEGORY_MAPS) return true;
+    String value = packageName == null ? "" : packageName.toLowerCase(Locale.ROOT);
+    return value.contains("autonavi")
+            || value.contains("baidumap")
+            || value.contains("tencent.map")
+            || value.contains("google.android.apps.maps")
+            || value.contains("waze")
+            || value.contains("navigation");
+  }
+
   private Thread loggerThread;
   private void logger() {
     // 持续读取服务端 shell 输出，方便把日志同步到 app 侧。
@@ -212,13 +302,25 @@ public class Client {
       try {
         while (!Thread.interrupted()) {
           String log = new String(shell.readAllBytes().array(), StandardCharsets.UTF_8);
-          if (!log.isEmpty()) L.logWithoutTime(uuid, log);
+          if (!log.isEmpty()) {
+            L.logWithoutTime(uuid, log);
+            logServerAudioLines(log);
+          }
           Thread.sleep(1000);
         }
       } catch (Exception ignored) {
       }
     });
     loggerThread.start();
+  }
+
+  private void logServerAudioLines(String serverLog) {
+    for (String line : serverLog.split("\\r?\\n")) {
+      String normalized = line.toLowerCase(Locale.ROOT);
+      if (normalized.contains("audio") || normalized.contains("opus") || normalized.contains("aopushdr")) {
+        Log.i(AUDIO_LOG_TAG, "server uuid=" + uuid + " | " + line);
+      }
+    }
   }
 
   private void tryCreateDisplay(Device device) {
@@ -292,7 +394,18 @@ public class Client {
       } else {
         // 没有指定应用时，默认把最近前台任务移动过去。
         if (tasksArray != null && tasksArray.length() > 0) {
-          String output = adb.runAdbCmd("am display move-stack " + tasksArray.getJSONObject(0).getInt("taskId") + " " + displayId);
+          int targetTaskId = tasksArray.getJSONObject(0).getInt("taskId");
+          // 音频 UID 和被移动任务必须来自同一个包，避免任务顺序变化后抓错应用声音。
+          if (!flowPackageName.isEmpty()) {
+            for (int i = 0; i < tasksArray.length(); i++) {
+              JSONObject task = tasksArray.getJSONObject(i);
+              if (flowPackageName.equals(task.optString("topPackage", ""))) {
+                targetTaskId = task.getInt("taskId");
+                break;
+              }
+            }
+          }
+          String output = adb.runAdbCmd("am display move-stack " + targetTaskId + " " + displayId);
           if (output.contains("Exception")) throw new Exception("");
         } else throw new Exception("");
       }
@@ -370,20 +483,33 @@ public class Client {
     try {
       // 音频流参数
       boolean useOpus = true;
-      if (bufferStream.readByte() == 1) useOpus = bufferStream.readByte() == 1;
+      int audioProtocol = bufferStream.readByte() & 0xff;
+      boolean taggedAudio = audioProtocol == 2;
+      if (audioProtocol != 0) useOpus = bufferStream.readByte() == 1;
+      Log.i(AUDIO_LOG_TAG, "handshake uuid=" + uuid
+              + ", protocol=" + audioProtocol
+              + ", tagged=" + taggedAudio
+              + ", codec=" + (useOpus ? "opus" : "aac"));
       // 循环处理报文
       while (!Thread.interrupted()) {
         switch (bufferStream.readByte()) {
           case AUDIO_EVENT:
-            byte[] audioFrame = controlPacket.readFrame(bufferStream);
+            int frameRole = taggedAudio ? normalizeAudioRole(bufferStream.readByte()) : normalizeAudioRole(audioRole);
+            byte[] audioFrame = controlPacket.readAudioFrame(bufferStream);
+            if (audioFrame.length == 0) break;
             if (!canPlayAudio()) break;
-            if (audioDecode != null) audioDecode.decodeIn(audioFrame);
+            AudioDecode decoder = audioDecodes[frameRole];
+            if (decoder != null) decoder.decodeIn(audioFrame);
             else {
               synchronized (mediaLifecycleLock) {
                 if (status != 1 || Thread.currentThread().isInterrupted()) return;
-                audioDecode = new AudioDecode(useOpus, audioFrame, handler);
+                if (audioDecodes[frameRole] == null) {
+                  audioDecodes[frameRole] = new AudioDecode(useOpus, audioFrame, audioHandlers[frameRole], frameRole);
+                  L.log(uuid, "audio decoder created role=" + audioRoleName(frameRole)
+                          + ", protocol=" + (taggedAudio ? "tagged" : "legacy"));
+                }
               }
-              playAudio(true);
+              playAudio(frameRole, true);
             }
             break;
           case CLIPBOARD_EVENT:
@@ -439,8 +565,13 @@ public class Client {
   }
 
   private void releaseResources(String error) {
+    Log.i(AUDIO_LOG_TAG, "client release " + audioClientDescription()
+            + ", error=" + (error == null ? "none" : error));
     releaseAudioOwner();
-    allClient.remove(this);
+    synchronized (multiLinkLock) {
+      allClient.remove(this);
+      rebalanceMultiLinkModesLocked(clientView.deviceOriginal);
+    }
     if (error != null) {
       PublicTools.logToast(error);
       if (AppData.setting.getShowReconnect())
@@ -461,28 +592,14 @@ public class Client {
             }
             break;
           case 1:
-            if (multiLink == 1) {
-              Client target = null;
-              boolean multi = false;
-              for (Client client : allClient) {
-                if (client.uuid.equals(uuid) && client.multiLink == 2) {
-                  if (target != null) {
-                    multi = true;
-                    break;
-                  }
-                  target = client;
-                }
-              }
-              if (target != null) {
-                if (multi) target.changeMultiLinkMode(1);
-                else target.changeMultiLinkMode(0);
-              }
-            }
             break;
           case 2:
             if (loggerThread != null) loggerThread.interrupt();
             String log = new String(shell.readAllBytes().array(), StandardCharsets.UTF_8);
-            if (!log.isEmpty()) L.logWithoutTime(uuid, log);
+            if (!log.isEmpty()) {
+              L.logWithoutTime(uuid, log);
+              logServerAudioLines(log);
+            }
             break;
           case 3:
             if (startThread != null) startThread.interrupt();
@@ -510,8 +627,13 @@ public class Client {
           case 6:
             synchronized (mediaLifecycleLock) {
               if (videoDecode != null) videoDecode.release();
-              if (audioDecode != null) audioDecode.release();
+              for (AudioDecode decoder : audioDecodes) {
+                if (decoder != null) decoder.release();
+              }
               if (handlerThread != null) handlerThread.quitSafely();
+              for (HandlerThread audioHandlerThread : audioHandlerThreads) {
+                if (audioHandlerThread != null) audioHandlerThread.quitSafely();
+              }
             }
             AppData.uiHandler.post(() -> clientView.hide(true));
             break;
@@ -617,9 +739,16 @@ public class Client {
   }
 
   public void changeMultiLinkMode(int multiLink) {
+    int oldMultiLink = this.multiLink;
     this.multiLink = multiLink;
     clientView.multiLink = multiLink;
-    playAudio(multiLink == 0 || multiLink == 1);
+    playAudio(canPlayAudio());
+    if (oldMultiLink != multiLink) {
+      Log.i(AUDIO_LOG_TAG, "multi-link changed " + audioClientDescription()
+              + ", old=" + oldMultiLink
+              + ", new=" + multiLink
+              + ", audioEligible=" + canPlayAudio());
+    }
     if (multiLink == 2) {
       clientView.device.clipboardSync = false;
       clientView.device.nightModeSync = false;
@@ -630,19 +759,33 @@ public class Client {
   }
 
   public void playAudio(boolean play) {
-    if (audioDecode == null) return;
-    if (play && !canPlayAudio()) return;
     synchronized (audioOwnerLock) {
-      if (play) requestAudioOwnerLocked();
-      else {
-        if (audioOwner == this) audioOwner = null;
-        audioDecode.playAudio(false);
+      for (int role = 0; role < audioDecodes.length; role++) {
+        playAudioLocked(role, play);
       }
     }
   }
 
+  private void playAudio(int role, boolean play) {
+    synchronized (audioOwnerLock) {
+      playAudioLocked(normalizeAudioRole(role), play);
+    }
+  }
+
+  private void playAudioLocked(int role, boolean play) {
+    AudioDecode decoder = audioDecodes[role];
+    if (decoder == null) return;
+    if (play && !canPlayAudio()) return;
+    if (play) requestAudioOwnerLocked(role);
+    else {
+      if (audioOwners[role] == this) audioOwners[role] = null;
+      decoder.playAudio(false);
+    }
+  }
+
   private boolean canPlayAudio() {
-    return multiLink == 0 || multiLink == 1;
+    // 直接投屏即使是同设备的从连接，也要预建双角色音频管线，供应用流转关闭后无缝接管。
+    return uidFilteredAudio || mode == 0 || multiLink == 0 || multiLink == 1;
   }
 
   private boolean shouldStartServerAudio(Device device) {
@@ -658,22 +801,115 @@ public class Client {
     return !oldDevice.address.isEmpty() && oldDevice.address.equals(device.address);
   }
 
-  private void requestAudioOwnerLocked() {
-    if (audioOwner != null && audioOwner != this && audioOwner.audioDecode != null) audioOwner.audioDecode.playAudio(false);
-    audioOwner = this;
-    audioDecode.playAudio(true);
+  private static void rebalanceMultiLinkModesLocked(Device device) {
+    if (device == null) return;
+    ArrayList<Client> sameDeviceClients = new ArrayList<>();
+    for (Client client : allClient) {
+      if (!client.isClosed() && client.isSamePhysicalDevice(device)) sameDeviceClients.add(client);
+    }
+    for (int i = 0; i < sameDeviceClients.size(); i++) {
+      int targetMode = sameDeviceClients.size() == 1 ? 0 : (i == 0 ? 1 : 2);
+      sameDeviceClients.get(i).changeMultiLinkMode(targetMode);
+    }
+    Log.i(AUDIO_LOG_TAG, "multi-link rebalanced uuid=" + device.uuid
+            + ", activeClients=" + sameDeviceClients.size());
+  }
+
+  private void requestAudioOwnerLocked(int role) {
+    AudioDecode decoder = audioDecodes[role];
+    if (decoder == null) return;
+    int requestedPriority = audioOwnerPriority(role);
+    if (requestedPriority == AUDIO_OWNER_PRIORITY_NONE) {
+      decoder.playAudio(false);
+      Log.i(AUDIO_LOG_TAG, "audio owner rejected role=" + audioRoleName(role)
+              + ", requester={" + audioClientDescription() + "}");
+      return;
+    }
+
+    Client oldOwner = audioOwners[role];
+    if (oldOwner == this) {
+      decoder.playAudio(true);
+      return;
+    }
+
+    int oldPriority = oldOwner == null ? AUDIO_OWNER_PRIORITY_NONE : oldOwner.audioOwnerPriority(role);
+    if (oldOwner != null
+            && oldOwner.audioDecodes[role] != null
+            && oldPriority > requestedPriority) {
+      decoder.playAudio(false);
+      Log.i(AUDIO_LOG_TAG, "audio owner retained role=" + audioRoleName(role)
+              + ", owner={" + oldOwner.audioClientDescription() + "}"
+              + ", ownerPriority=" + oldPriority
+              + ", standby={" + audioClientDescription() + "}"
+              + ", standbyPriority=" + requestedPriority);
+      return;
+    }
+
+    if (oldOwner != null && oldOwner != this && oldOwner.audioDecodes[role] != null) {
+      oldOwner.audioDecodes[role].playAudio(false);
+    }
+    audioOwners[role] = this;
+    decoder.playAudio(true);
+    Log.i(AUDIO_LOG_TAG, "audio owner changed role=" + audioRoleName(role)
+            + ", old={" + (oldOwner == null ? "none" : oldOwner.audioClientDescription()) + "}"
+            + ", new={" + audioClientDescription() + "}"
+            + ", priority=" + requestedPriority);
   }
 
   private void releaseAudioOwner() {
     synchronized (audioOwnerLock) {
-      if (audioOwner != this) return;
-      audioOwner = null;
-      for (Client client : allClient) {
-        if (client != this && !client.isClosed() && client.canPlayAudio() && client.audioDecode != null) {
-          client.requestAudioOwnerLocked();
-          break;
+      for (int role = 0; role < audioOwners.length; role++) {
+        if (audioOwners[role] != this) continue;
+        audioOwners[role] = null;
+        Client replacement = null;
+        int replacementPriority = AUDIO_OWNER_PRIORITY_NONE;
+        for (Client client : allClient) {
+          if (client == this || client.audioDecodes[role] == null) continue;
+          int candidatePriority = client.audioOwnerPriority(role);
+          if (candidatePriority > replacementPriority) {
+            replacement = client;
+            replacementPriority = candidatePriority;
+          }
         }
+        Log.i(AUDIO_LOG_TAG, "audio owner released role=" + audioRoleName(role)
+                + ", old={" + audioClientDescription() + "}"
+                + ", replacement={" + (replacement == null ? "none" : replacement.audioClientDescription()) + "}"
+                + ", replacementPriority=" + replacementPriority);
+        if (replacement != null) replacement.requestAudioOwnerLocked(role);
       }
     }
+  }
+
+  private int audioOwnerPriority(int role) {
+    role = normalizeAudioRole(role);
+    if (isClosed() || audioDecodes[role] == null || !canPlayAudio()) return AUDIO_OWNER_PRIORITY_NONE;
+    if (uidFilteredAudio) {
+      return normalizeAudioRole(audioRole) == role
+              ? AUDIO_OWNER_PRIORITY_UID_FLOW : AUDIO_OWNER_PRIORITY_NONE;
+    }
+    if (mode == 0) return AUDIO_OWNER_PRIORITY_DIRECT_MIRROR;
+    if (multiLink == 0 || multiLink == 1) return AUDIO_OWNER_PRIORITY_PRIMARY;
+    return AUDIO_OWNER_PRIORITY_NONE;
+  }
+
+  private String audioClientDescription() {
+    String shortSessionId = sessionId.length() > 8 ? sessionId.substring(0, 8) : sessionId;
+    return "session=" + shortSessionId
+            + ", uuid=" + uuid
+            + ", mode=" + (mode == 0 ? "direct" : "flow")
+            + ", displayId=" + displayId
+            + ", package=" + (flowPackageName.isEmpty() ? "none" : flowPackageName)
+            + ", uid=" + flowUid
+            + ", configuredRole=" + audioRoleName(audioRole)
+            + ", uidFiltered=" + uidFilteredAudio
+            + ", multiLink=" + multiLink;
+  }
+
+  private static int normalizeAudioRole(int role) {
+    return role == AudioDecode.ROLE_NAVIGATION ? AudioDecode.ROLE_NAVIGATION : AudioDecode.ROLE_MEDIA;
+  }
+
+  private static String audioRoleName(int role) {
+    return normalizeAudioRole(role) == AudioDecode.ROLE_NAVIGATION ? "navigation" : "media";
   }
 }

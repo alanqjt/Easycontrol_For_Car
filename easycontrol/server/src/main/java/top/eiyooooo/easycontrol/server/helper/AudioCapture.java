@@ -2,6 +2,7 @@ package top.eiyooooo.easycontrol.server.helper;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
+import android.content.Context;
 import android.content.AttributionSource;
 import android.media.*;
 import android.os.Build;
@@ -13,6 +14,8 @@ import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.util.Set;
 /**
  * 音频捕获辅助类。
  * 作用是创建并初始化 AudioRecord，让服务器侧可以采到系统混音里的音频。
@@ -33,24 +36,275 @@ public final class AudioCapture {
     public static final int ENCODING = AudioFormat.ENCODING_PCM_16BIT;
     // 每个采样点占 2 字节，因为这里是 16bit PCM。
     public static final int BYTES_PER_SAMPLE = 2;
+    public static final class Session {
+        private final AudioRecord recorder;
+        private final PolicyRegistration policyRegistration;
+        private boolean released;
+
+        private Session(AudioRecord recorder, PolicyRegistration policyRegistration) {
+            this.recorder = recorder;
+            this.policyRegistration = policyRegistration;
+        }
+
+        private void start() {
+            recorder.startRecording();
+        }
+
+        public int read(ByteBuffer buffer, int size) {
+            return recorder.read(buffer, size);
+        }
+
+        public synchronized void release() {
+            if (released) return;
+            released = true;
+            try {
+                recorder.stop();
+            } catch (Exception ignored) {
+            }
+            try {
+                recorder.release();
+            } catch (Exception ignored) {
+            }
+            if (policyRegistration != null) policyRegistration.releaseReference();
+        }
+    }
+
+    public static final class SplitSession {
+        public final Session media;
+        public final Session navigation;
+
+        private SplitSession(Session media, Session navigation) {
+            this.media = media;
+            this.navigation = navigation;
+        }
+
+        public void release() {
+            media.release();
+            navigation.release();
+        }
+    }
+
+    /** 两个 AudioRecord 可以共享同一个 AudioPolicy，最后一个释放时才注销策略。 */
+    private static final class PolicyRegistration {
+        private final Object audioPolicy;
+        private final Class<?> audioPolicyClass;
+        private int references;
+
+        private PolicyRegistration(Object audioPolicy, Class<?> audioPolicyClass, int references) {
+            this.audioPolicy = audioPolicy;
+            this.audioPolicyClass = audioPolicyClass;
+            this.references = references;
+        }
+
+        private synchronized void releaseReference() {
+            if (references <= 0) return;
+            references--;
+            if (references == 0) unregisterAudioPolicy(audioPolicy, audioPolicyClass);
+        }
+    }
 
     /**
      * 初始化一个已经开始录音的 AudioRecord。
      * 这里会先尝试官方 Builder；如果失败，再切到反射实现。
      */
-    public static AudioRecord init() {
+    public static Session init(int audioUid, boolean allowFallback) {
         AudioRecord recorder;
+        if (audioUid > 0) {
+            Session uidSession = null;
+            try {
+                uidSession = createUidAudioRecord(audioUid);
+                uidSession.start();
+                L.i("audio capture filtered by uid=" + audioUid);
+                return uidSession;
+            } catch (Exception e) {
+                if (uidSession != null) uidSession.release();
+                L.w("Cannot capture audio for uid=" + audioUid, e);
+                if (!allowFallback) throw new RuntimeException("UID audio capture unavailable", e);
+                L.w("Falling back to REMOTE_SUBMIX audio capture");
+            }
+        }
         try {
             // 正常情况下优先用公开 API，兼容性最好也最安全。
             recorder = createAudioRecord();
-        } catch (NullPointerException e) {
-            // 某些系统实现会在 Builder 里直接空指针，这里走兜底逻辑。
+        } catch (RuntimeException e) {
+            // 某些系统实现会在 Builder 里直接异常，这里走兜底逻辑。
             L.w("Cannot create AudioRecord, try workaround");
             recorder = createAudioRecordWorkaround();
         }
         // 录音对象创建成功后立刻开始采集。
-        recorder.startRecording();
+        Session session = new Session(recorder, null);
+        session.start();
+        return session;
+    }
+
+    /**
+     * Android 13+ 通过 AudioPolicy 创建只匹配指定 UID 的回环录音源。
+     * 该实现沿用 scrcpy 的 playback capture 路径，但规则从 usage 改为 UID。
+     */
+    @TargetApi(Build.VERSION_CODES.TIRAMISU)
+    @SuppressLint({"PrivateApi", "DiscouragedPrivateApi"})
+    private static Session createUidAudioRecord(int uid) throws Exception {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            throw new UnsupportedOperationException("UID audio capture requires Android 13+");
+        }
+
+        Class<?> audioMixingRuleClass = Class.forName("android.media.audiopolicy.AudioMixingRule");
+        Class<?> audioMixingRuleBuilderClass = Class.forName("android.media.audiopolicy.AudioMixingRule$Builder");
+        Object audioMixingRuleBuilder = audioMixingRuleBuilderClass.getConstructor().newInstance();
+
+        int mixRolePlayers = audioMixingRuleClass.getField("MIX_ROLE_PLAYERS").getInt(null);
+        audioMixingRuleBuilderClass.getMethod("setTargetMixRole", int.class).invoke(audioMixingRuleBuilder, mixRolePlayers);
+        int ruleMatchUid = audioMixingRuleClass.getField("RULE_MATCH_UID").getInt(null);
+        audioMixingRuleBuilderClass.getMethod("addMixRule", int.class, Object.class)
+                .invoke(audioMixingRuleBuilder, ruleMatchUid, Integer.valueOf(uid));
+        Object audioMixingRule = audioMixingRuleBuilderClass.getMethod("build").invoke(audioMixingRuleBuilder);
+
+        Class<?> audioMixClass = Class.forName("android.media.audiopolicy.AudioMix");
+        Object audioMix = createAudioMix(audioMixingRuleClass, audioMixClass, audioMixingRule);
+
+        Class<?> audioPolicyClass = Class.forName("android.media.audiopolicy.AudioPolicy");
+        Class<?> audioPolicyBuilderClass = Class.forName("android.media.audiopolicy.AudioPolicy$Builder");
+        Object audioPolicyBuilder = audioPolicyBuilderClass.getConstructor(Context.class).newInstance(FakeContext.get());
+        audioPolicyBuilderClass.getMethod("addMix", audioMixClass).invoke(audioPolicyBuilder, audioMix);
+        Object audioPolicy = audioPolicyBuilderClass.getMethod("build").invoke(audioPolicyBuilder);
+        registerAudioPolicy(audioPolicy, audioPolicyClass);
+        try {
+            AudioRecord recorder = createAudioRecordSink(audioPolicyClass, audioMixClass, audioPolicy, audioMix);
+            return new Session(recorder, new PolicyRegistration(audioPolicy, audioPolicyClass, 1));
+        } catch (Exception e) {
+            unregisterAudioPolicy(audioPolicy, audioPolicyClass);
+            throw e;
+        }
+    }
+
+    /**
+     * 直接投屏双路采集：导航路匹配导航 UID，媒体路排除这些 UID，两个集合互不重叠。
+     * 找不到导航包时退化为按 Android navigation usage 拆分。
+     */
+    @TargetApi(Build.VERSION_CODES.TIRAMISU)
+    @SuppressLint({"PrivateApi", "DiscouragedPrivateApi"})
+    public static SplitSession initSplit(Set<Integer> navigationUids) throws Exception {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            throw new UnsupportedOperationException("Split audio capture requires Android 13+");
+        }
+
+        Class<?> ruleClass = Class.forName("android.media.audiopolicy.AudioMixingRule");
+        Class<?> ruleBuilderClass = Class.forName("android.media.audiopolicy.AudioMixingRule$Builder");
+        int mixRolePlayers = ruleClass.getField("MIX_ROLE_PLAYERS").getInt(null);
+        int ruleMatchUid = ruleClass.getField("RULE_MATCH_UID").getInt(null);
+        int ruleMatchUsage = ruleClass.getField("RULE_MATCH_ATTRIBUTE_USAGE").getInt(null);
+        Object navigationRuleBuilder = ruleBuilderClass.getConstructor().newInstance();
+        Object mediaRuleBuilder = ruleBuilderClass.getConstructor().newInstance();
+        ruleBuilderClass.getMethod("setTargetMixRole", int.class).invoke(navigationRuleBuilder, mixRolePlayers);
+        ruleBuilderClass.getMethod("setTargetMixRole", int.class).invoke(mediaRuleBuilder, mixRolePlayers);
+
+        if (!navigationUids.isEmpty()) {
+            Method addMixRule = ruleBuilderClass.getMethod("addMixRule", int.class, Object.class);
+            Method excludeMixRule = ruleBuilderClass.getMethod("excludeMixRule", int.class, Object.class);
+            for (Integer uid : navigationUids) {
+                addMixRule.invoke(navigationRuleBuilder, ruleMatchUid, uid);
+                excludeMixRule.invoke(mediaRuleBuilder, ruleMatchUid, uid);
+            }
+        } else {
+            AudioAttributes navigationAttributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                    .build();
+            ruleBuilderClass.getMethod("addMixRule", int.class, Object.class)
+                    .invoke(navigationRuleBuilder, ruleMatchUsage, navigationAttributes);
+            ruleBuilderClass.getMethod("excludeMixRule", int.class, Object.class)
+                    .invoke(mediaRuleBuilder, ruleMatchUsage, navigationAttributes);
+        }
+
+        Object navigationRule = ruleBuilderClass.getMethod("build").invoke(navigationRuleBuilder);
+        Object mediaRule = ruleBuilderClass.getMethod("build").invoke(mediaRuleBuilder);
+        Class<?> mixClass = Class.forName("android.media.audiopolicy.AudioMix");
+        Object navigationMix = createAudioMix(ruleClass, mixClass, navigationRule);
+        Object mediaMix = createAudioMix(ruleClass, mixClass, mediaRule);
+
+        Class<?> policyClass = Class.forName("android.media.audiopolicy.AudioPolicy");
+        Class<?> policyBuilderClass = Class.forName("android.media.audiopolicy.AudioPolicy$Builder");
+        Object policyBuilder = policyBuilderClass.getConstructor(Context.class).newInstance(FakeContext.get());
+        Method addMix = policyBuilderClass.getMethod("addMix", mixClass);
+        addMix.invoke(policyBuilder, navigationMix);
+        addMix.invoke(policyBuilder, mediaMix);
+        Object policy = policyBuilderClass.getMethod("build").invoke(policyBuilder);
+        registerAudioPolicy(policy, policyClass);
+
+        AudioRecord navigationRecorder = null;
+        AudioRecord mediaRecorder = null;
+        try {
+            navigationRecorder = createAudioRecordSink(policyClass, mixClass, policy, navigationMix);
+            mediaRecorder = createAudioRecordSink(policyClass, mixClass, policy, mediaMix);
+            PolicyRegistration registration = new PolicyRegistration(policy, policyClass, 2);
+            Session navigation = new Session(navigationRecorder, registration);
+            Session media = new Session(mediaRecorder, registration);
+            navigation.start();
+            media.start();
+            L.i("direct audio capture split ready, navigationUids=" + navigationUids);
+            return new SplitSession(media, navigation);
+        } catch (Exception e) {
+            releaseRecorder(navigationRecorder);
+            releaseRecorder(mediaRecorder);
+            unregisterAudioPolicy(policy, policyClass);
+            throw e;
+        }
+    }
+
+    private static Object createAudioMix(Class<?> ruleClass, Class<?> mixClass, Object rule) throws Exception {
+        Class<?> mixBuilderClass = Class.forName("android.media.audiopolicy.AudioMix$Builder");
+        Object mixBuilder = mixBuilderClass.getConstructor(ruleClass).newInstance(rule);
+        mixBuilderClass.getMethod("setFormat", AudioFormat.class).invoke(mixBuilder, createAudioFormat());
+        int routeFlags = mixClass.getField("ROUTE_FLAG_LOOP_BACK").getInt(null);
+        mixBuilderClass.getMethod("setRouteFlags", int.class).invoke(mixBuilder, routeFlags);
+        return mixBuilderClass.getMethod("build").invoke(mixBuilder);
+    }
+
+    private static void registerAudioPolicy(Object policy, Class<?> policyClass) throws Exception {
+        Method register = AudioManager.class.getDeclaredMethod("registerAudioPolicyStatic", policyClass);
+        register.setAccessible(true);
+        int result = (int) register.invoke(null, policy);
+        if (result != 0) throw new RuntimeException("registerAudioPolicy() returned " + result);
+    }
+
+    private static AudioRecord createAudioRecordSink(Class<?> policyClass, Class<?> mixClass,
+                                                      Object policy, Object mix) throws Exception {
+        AudioRecord recorder = (AudioRecord) policyClass.getMethod("createAudioRecordSink", mixClass).invoke(policy, mix);
+        if (recorder == null || recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+            throw new RuntimeException("AudioRecord sink is not initialized");
+        }
         return recorder;
+    }
+
+    private static AudioFormat createAudioFormat() {
+        return new AudioFormat.Builder()
+                .setEncoding(ENCODING)
+                .setSampleRate(SAMPLE_RATE)
+                .setChannelMask(CHANNEL_CONFIG)
+                .build();
+    }
+
+    private static void unregisterAudioPolicy(Object audioPolicy, Class<?> audioPolicyClass) {
+        if (audioPolicy == null || audioPolicyClass == null) return;
+        try {
+            Method unregisterAudioPolicy = AudioManager.class.getDeclaredMethod("unregisterAudioPolicyAsyncStatic", audioPolicyClass);
+            unregisterAudioPolicy.setAccessible(true);
+            unregisterAudioPolicy.invoke(null, audioPolicy);
+        } catch (Exception e) {
+            // scrcpy server 进程随后会退出；注销失败不会影响下一次独立进程注册。
+            L.w("Cannot unregister UID audio policy", e);
+        }
+    }
+
+    private static void releaseRecorder(AudioRecord recorder) {
+        if (recorder == null) return;
+        try {
+            recorder.stop();
+        } catch (Exception ignored) {
+        }
+        try {
+            recorder.release();
+        } catch (Exception ignored) {
+        }
     }
 
     /**

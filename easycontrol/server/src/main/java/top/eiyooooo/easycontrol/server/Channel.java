@@ -397,6 +397,19 @@ public class Channel {
         return builder.toString();
     }
 
+    public JSONObject getAppAudioInfo(String packageName) throws Exception {
+        PackageInfo packageInfo = getPackageInfo(packageName);
+        if (packageInfo == null || packageInfo.applicationInfo == null) {
+            throw new IllegalArgumentException("package not found: " + packageName);
+        }
+        ApplicationInfo applicationInfo = packageInfo.applicationInfo;
+        JSONObject result = new JSONObject();
+        result.put("packageName", applicationInfo.packageName);
+        result.put("uid", applicationInfo.uid);
+        result.put("category", Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? applicationInfo.category : ApplicationInfo.CATEGORY_UNDEFINED);
+        return result;
+    }
+
     @SuppressWarnings("unchecked")
     private List<ActivityManager.RecentTaskInfo> getRecentTasks(int maxNum, int flags,
                                                                 int userId) throws Exception {
@@ -430,13 +443,21 @@ public class Channel {
                     Object displayId = field.get(taskInfo);
                     jsonObject.put("displayId", displayId);
                 }
-                jsonObject.put("topPackage", taskInfo.topActivity == null ? "" : taskInfo.topActivity.getPackageName());
+                String packageName = taskInfo.topActivity == null ? "" : taskInfo.topActivity.getPackageName();
+                jsonObject.put("topPackage", packageName);
+                jsonObject.put("packageName", packageName);
                 jsonObject.put("topActivity", taskInfo.topActivity == null ? "" : taskInfo.topActivity.getClassName());
                 if (taskInfo.topActivity != null) {
                     PackageInfo packageInfo = getPackageInfo(taskInfo.topActivity.getPackageName());
-                    jsonObject.put("label", getLabel(packageInfo.applicationInfo));
+                    ApplicationInfo applicationInfo = packageInfo == null ? null : packageInfo.applicationInfo;
+                    jsonObject.put("label", applicationInfo == null ? "" : getLabel(applicationInfo));
+                    jsonObject.put("uid", applicationInfo == null ? -1 : applicationInfo.uid);
+                    jsonObject.put("category", applicationInfo != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                            ? applicationInfo.category : ApplicationInfo.CATEGORY_UNDEFINED);
                 } else {
                     jsonObject.put("label", "");
+                    jsonObject.put("uid", -1);
+                    jsonObject.put("category", ApplicationInfo.CATEGORY_UNDEFINED);
                 }
             }
             jsonArray.put(jsonObject);

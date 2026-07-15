@@ -170,6 +170,12 @@ public class Server {
                     postResponse(channel.getAppDetail(packageName));
                     break;
                 }
+                case "/getAppAudioInfo": {
+                    String packageName = request.get("package");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    postResponse(channel.getAppAudioInfo(packageName).toString());
+                    break;
+                }
                 case "/getAppMainActivity": {
                     String packageName = request.get("package");
                     if (packageName == null) throw new Exception("parameter 'package' not found");
