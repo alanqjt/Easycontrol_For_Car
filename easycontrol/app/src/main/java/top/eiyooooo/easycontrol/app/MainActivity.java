@@ -8,6 +8,7 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -366,6 +367,33 @@ public class MainActivity extends Activity {
     }
     if (width <= 0 || height <= 0) return null;
     return new Pair<>(width, height);
+  }
+
+  public static Rect getMainWindowBoundsOnScreen() {
+    MainActivity activity = activeInstance;
+    if (activity == null
+            || activity.mainActivity == null
+            || activity.isFinishing()
+            || activity.isDestroyed()) return null;
+    View root = activity.mainActivity.getRoot();
+    int width = root.getWidth();
+    int height = root.getHeight();
+    if (width <= 0 || height <= 0) return null;
+    int[] location = new int[2];
+    root.getLocationOnScreen(location);
+    return new Rect(location[0], location[1], location[0] + width, location[1] + height);
+  }
+
+  public static boolean shouldRestrictFloatingWindowsToMainWindow() {
+    MainActivity activity = activeInstance;
+    if (activity == null) return false;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity.isInMultiWindowMode()) {
+      return true;
+    }
+    Rect bounds = getMainWindowBoundsOnScreen();
+    long fullArea = (long) AppData.realScreenSize.widthPixels * AppData.realScreenSize.heightPixels;
+    long windowArea = bounds == null ? 0L : (long) bounds.width() * bounds.height();
+    return fullArea > 0L && windowArea > 0L && windowArea * 10L < fullArea * 8L;
   }
 
   public static int getEmbeddedProjectionTargetDensityDpi() {
