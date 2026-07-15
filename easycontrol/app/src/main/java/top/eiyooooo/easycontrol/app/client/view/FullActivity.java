@@ -62,8 +62,6 @@ public class FullActivity extends Activity implements SensorEventListener {
     if (clientView == null) return;
     fullMaxSize = new Pair<>(fullActivity.textureViewLayout.getMeasuredWidth(), fullActivity.textureViewLayout.getMeasuredHeight());
     clientView.updateMaxSize(fullMaxSize);
-    if (clientView.mode == 1 && clientView.device.setResolution)
-      clientView.changeSize((float) fullMaxSize.first / (float) fullMaxSize.second);
   }
 
   @Override
@@ -108,9 +106,6 @@ public class FullActivity extends Activity implements SensorEventListener {
     fullActivity.buttonHome.setVisibility(mode == 0 ? View.VISIBLE : View.INVISIBLE);
     if (mode == 0) fullActivity.buttonTransfer.setImageResource(R.drawable.share_out);
     else fullActivity.buttonTransfer.setImageResource(R.drawable.share_in);
-    if (mode > 0 && clientView.mode == 1 && clientView.device.setResolution) {
-      updateMaxSize();
-    }
   }
 
   // 设置按钮监听

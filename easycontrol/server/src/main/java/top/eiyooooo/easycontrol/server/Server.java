@@ -11,6 +11,7 @@ import top.eiyooooo.easycontrol.server.utils.Workarounds;
 import top.eiyooooo.easycontrol.server.wrappers.DisplayManager;
 import top.eiyooooo.easycontrol.server.wrappers.ServiceManager;
 import top.eiyooooo.easycontrol.server.wrappers.UiModeManager;
+import top.eiyooooo.easycontrol.server.wrappers.WindowManager;
 
 import java.io.DataOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -190,6 +191,8 @@ public class Server {
                     String line1 = request.get("width");
                     String line2 = request.get("height");
                     String line3 = request.get("density");
+                    String profile = request.get("profile");
+                    if (profile == null || profile.isEmpty()) profile = "standard-phone";
                     if (line1 != null && line2 == null)
                         throw new Exception("parameter 'width' found, but 'height' not found");
                     if (line1 == null && line2 != null)
@@ -197,34 +200,49 @@ public class Server {
 
                     // 读取默认屏幕参数，作为新虚拟屏幕的参考。
                     DisplayInfo defaultDisplay = DisplayManager.getDisplayInfo(Display.DEFAULT_DISPLAY);
+                    if (defaultDisplay == null) throw new Exception("Default display not found");
                     int width, height, density;
                     if (line1 != null) {
                         width = Integer.parseInt(line1);
                         height = Integer.parseInt(line2);
                     } else {
-                        int rotation = defaultDisplay.rotation;
-                        if (rotation == 1 || rotation == 3) {
-                            width = defaultDisplay.size.second;
-                            height = defaultDisplay.size.first;
-                        } else {
-                            width = defaultDisplay.size.first;
-                            height = defaultDisplay.size.second;
-                        }
+                        // logicalWidth/logicalHeight 已包含当前旋转，不能再次交换。
+                        width = defaultDisplay.size.first;
+                        height = defaultDisplay.size.second;
                     }
                     if (line3 != null) density = Integer.parseInt(line3);
                     else density = defaultDisplay.density;
+                    if (width <= 0 || height <= 0 || density <= 0)
+                        throw new Exception("Invalid virtual display configuration");
 
                     // 真正创建虚拟显示器。
                     VirtualDisplay display = channel.createVirtualDisplay(width, height, density);
                     if (display == null) throw new Exception("Failed to create virtual display");
                     int createdDisplayId = display.getDisplay().getDisplayId();
+                    // 先把自然方向锁定为 rotation=0，再禁止应用请求改写副屏方向。
+                    WindowManager.freezeRotation(createdDisplayId, 0);
+                    boolean fixedToUserRotation = WindowManager.setFixedToUserRotation(
+                            createdDisplayId, true);
                     // 缓存下来，后续可以重设尺寸或释放。
                     cache.put(createdDisplayId, display);
+                    DisplayInfo createdDisplay = DisplayManager.getDisplayInfo(createdDisplayId);
+                    L.i("virtual display created"
+                            + ", profile=" + profile
+                            + ", source=" + defaultDisplay.size.first + "x" + defaultDisplay.size.second
+                            + "@" + defaultDisplay.density + "dpi"
+                            + ", sourceRotation=" + defaultDisplay.rotation
+                            + ", requested=" + width + "x" + height + "@" + density + "dpi"
+                            + ", actual=" + (createdDisplay == null ? "unknown"
+                            : createdDisplay.size.first + "x" + createdDisplay.size.second
+                            + "@" + createdDisplay.density + "dpi")
+                            + ", actualRotation=" + (createdDisplay == null ? "unknown" : createdDisplay.rotation)
+                            + ", fixedToUserRotation=" + fixedToUserRotation);
                     int[] displayIds = DisplayManager.getDisplayIds();
                     for (int displayId : displayIds) {
                         L.d(">>>display -> " + displayId);
                     }
-                    postResponse("success create display, id -> " + createdDisplayId);
+                    postResponse("success create display, fixedToUserRotation="
+                            + fixedToUserRotation + ", id -> " + createdDisplayId);
                     break;
                 }
                 case "/resizeDisplay": {
@@ -306,6 +324,19 @@ public class Server {
                     String error = channel.openApp(packageName, activity, Integer.parseInt(id));
                     if (error != null) throw new Exception(error);
                     postResponse("success");
+                    break;
+                }
+                case "/moveTaskToDisplay": {
+                    String taskId = request.get("taskId");
+                    String displayId = request.get("displayId");
+                    String packageName = request.get("package");
+                    boolean recreate = "1".equals(request.get("recreate"));
+                    if (taskId == null) throw new Exception("parameter 'taskId' not found");
+                    if (displayId == null) throw new Exception("parameter 'displayId' not found");
+                    String strategy = channel.moveTaskToDisplay(
+                            Integer.parseInt(taskId), Integer.parseInt(displayId), packageName,
+                            recreate);
+                    postResponse("success move task, strategy=" + strategy);
                     break;
                 }
                 case "/stopAppByPackage": {

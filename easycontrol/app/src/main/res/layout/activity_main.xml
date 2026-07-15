@@ -10,6 +10,7 @@
   android:paddingEnd="@dimen/pagePadding">
 
   <LinearLayout
+    android:id="@+id/main_header"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:baselineAligned="false"
@@ -19,6 +20,7 @@
     android:paddingBottom="18dp">
 
     <LinearLayout
+      android:id="@+id/main_header_title"
       android:layout_width="0dp"
       android:layout_height="wrap_content"
       android:layout_weight="1"
@@ -57,6 +59,7 @@
     </LinearLayout>
 
     <HorizontalScrollView
+      android:id="@+id/main_header_actions"
       android:layout_width="wrap_content"
       android:layout_height="wrap_content"
       android:clipToPadding="false"
@@ -69,6 +72,50 @@
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal">
+
+        <LinearLayout
+          android:id="@+id/button_embedded_projection_mode"
+          android:layout_width="190dp"
+          android:layout_height="54dp"
+          android:layout_marginStart="8dp"
+          android:background="@drawable/toolbar_icon_background"
+          android:clickable="true"
+          android:contentDescription="@string/main_embedded_mode_button"
+          android:focusable="true"
+          android:gravity="center_vertical"
+          android:orientation="horizontal"
+          android:paddingStart="12dp"
+          android:paddingEnd="8dp">
+
+          <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_display"
+            android:tint="@color/onBackground" />
+
+          <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="@string/main_embedded_mode_button"
+            android:textColor="@color/onBackground"
+            android:textSize="@dimen/smallFont" />
+
+          <Switch
+            android:id="@+id/switch_embedded_projection_mode"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:clickable="false"
+            android:focusable="false"
+            android:showText="false"
+            android:thumbTint="@color/switch_thumb"
+            android:trackTint="@color/switch_track" />
+        </LinearLayout>
 
         <LinearLayout
           android:id="@+id/button_set_default"
@@ -202,6 +249,40 @@
             android:textSize="@dimen/smallFont" />
         </LinearLayout>
 
+        <LinearLayout
+          android:id="@+id/button_close_all_projections"
+          android:layout_width="166dp"
+          android:layout_height="54dp"
+          android:layout_marginStart="8dp"
+          android:background="@drawable/button_danger_outline"
+          android:clickable="true"
+          android:contentDescription="@string/main_close_all_projections"
+          android:focusable="true"
+          android:gravity="center"
+          android:orientation="horizontal"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp">
+
+          <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/x"
+            android:tint="@color/alert" />
+
+          <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="@string/main_close_all_projections"
+            android:textColor="@color/alert"
+            android:textSize="@dimen/smallFont" />
+        </LinearLayout>
+
         <ImageView
           android:id="@+id/button_refresh"
           android:layout_width="52dp"
@@ -236,28 +317,43 @@
 
   </LinearLayout>
 
-  <ScrollView
-    android:id="@+id/devices_list"
+  <FrameLayout
+    android:id="@+id/main_content"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/dashboard_panel_background"
-    android:clipToPadding="false"
-    android:fillViewport="true"
-    android:paddingStart="6dp"
-    android:paddingTop="12dp"
-    android:paddingEnd="6dp"
-    android:paddingBottom="60dp">
+    android:layout_height="0dp"
+    android:layout_weight="1">
 
-    <GridLayout
-      android:id="@+id/devices_grid"
+    <ScrollView
+      android:id="@+id/devices_list"
       android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:alignmentMode="alignBounds"
-      android:columnCount="4"
-      android:orientation="horizontal"
-      android:useDefaultMargins="false"
-      tools:ignore="UselessParent"
-      tools:listitem="@layout/item_device_card" />
-  </ScrollView>
+      android:layout_height="match_parent"
+      android:background="@drawable/dashboard_panel_background"
+      android:clipToPadding="false"
+      android:fillViewport="true"
+      android:paddingStart="6dp"
+      android:paddingTop="12dp"
+      android:paddingEnd="6dp"
+      android:paddingBottom="60dp">
+
+      <GridLayout
+        android:id="@+id/devices_grid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:alignmentMode="alignBounds"
+        android:columnCount="4"
+        android:orientation="horizontal"
+        android:useDefaultMargins="false"
+        tools:ignore="UselessParent"
+        tools:listitem="@layout/item_device_card" />
+    </ScrollView>
+
+    <FrameLayout
+      android:id="@+id/embedded_projection_host"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:background="@drawable/dashboard_panel_background"
+      android:padding="6dp"
+      android:visibility="gone" />
+  </FrameLayout>
 
 </LinearLayout>

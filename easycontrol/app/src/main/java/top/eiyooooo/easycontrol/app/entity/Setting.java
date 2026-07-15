@@ -281,6 +281,15 @@ public final class Setting {
     editor.apply();
   }
 
+  public boolean getEmbeddedProjectionMode() {
+    return sharedPreferences.getBoolean("embeddedProjectionMode", false);
+  }
+
+  public void setEmbeddedProjectionMode(boolean value) {
+    editor.putBoolean("embeddedProjectionMode", value);
+    editor.apply();
+  }
+
   public boolean getShowUsage() {
     return sharedPreferences.getBoolean("showUsage", false);
   }

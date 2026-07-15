@@ -22,6 +22,7 @@ import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.MediaCodec;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.view.Surface;
@@ -38,6 +39,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -356,6 +358,132 @@ public class Channel {
             L.e("openApp", e);
         }
         return null;
+    }
+
+    @SuppressLint("BlockedPrivateApi")
+    public String moveTaskToDisplay(int taskId, int displayId, String packageName,
+                                    boolean recreateActivity) throws Exception {
+        String strategy;
+        try {
+            Object activityTaskManager = Class.forName("android.app.ActivityTaskManager")
+                    .getDeclaredMethod("getService")
+                    .invoke(null);
+            if (packageName != null && !packageName.isEmpty()) {
+                try {
+                    activityTaskManager.getClass()
+                            .getMethod("clearLaunchParamsForPackages", List.class)
+                            .invoke(activityTaskManager, Arrays.asList(packageName));
+                } catch (Exception e) {
+                    L.w("clear launch params before task transfer failed", unwrapReflectionError(e));
+                }
+            }
+
+            ActivityOptions options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId);
+            try {
+                Method setLaunchWindowingMode = ActivityOptions.class
+                        .getDeclaredMethod("setLaunchWindowingMode", int.class);
+                setLaunchWindowingMode.setAccessible(true);
+                setLaunchWindowingMode.invoke(options, 1);
+            } catch (Exception e) {
+                L.w("set fullscreen windowing mode before task transfer failed", unwrapReflectionError(e));
+            }
+
+            Method startFromRecents = activityTaskManager.getClass()
+                    .getMethod("startActivityFromRecents", int.class, Bundle.class);
+            Object result = startFromRecents.invoke(activityTaskManager, taskId, options.toBundle());
+            if (result instanceof Integer && (Integer) result < 0) {
+                throw new IllegalStateException("startActivityFromRecents result=" + result);
+            }
+            L.i("move task with startActivityFromRecents, taskId=" + taskId
+                    + ", displayId=" + displayId + ", package=" + packageName
+                    + ", result=" + result);
+            strategy = "startActivityFromRecents";
+        } catch (Exception primaryError) {
+            Throwable cause = unwrapReflectionError(primaryError);
+            L.w("startActivityFromRecents unavailable, fallback to move-stack", cause);
+            String output = execReadOutput("am display move-stack " + taskId + " " + displayId);
+            L.i("move task with move-stack fallback, taskId=" + taskId
+                    + ", displayId=" + displayId + ", output=" + output);
+            strategy = "move-stack";
+        }
+
+        String refreshStrategy = "none";
+        if (recreateActivity && packageName != null && !packageName.isEmpty()) {
+            try {
+                Thread.sleep(250);
+                restartTaskTopActivityProcessIfVisible(taskId);
+                refreshStrategy = "restartTaskTopActivityProcessIfVisible";
+            } catch (Exception restartError) {
+                L.w("restart moved task unavailable, fallback to task relayout",
+                        unwrapReflectionError(restartError));
+                try {
+                    forceTaskRelayout(taskId);
+                    refreshStrategy = "resizeTask";
+                } catch (Exception relayoutError) {
+                    L.w("task relayout after display move failed",
+                            unwrapReflectionError(relayoutError));
+                    refreshStrategy = "unsupported";
+                }
+            }
+        }
+        L.i("move task finished, taskId=" + taskId + ", displayId=" + displayId
+                + ", package=" + packageName + ", strategy=" + strategy
+                + ", refresh=" + refreshStrategy);
+        return strategy + ",refresh=" + refreshStrategy;
+    }
+
+    @SuppressLint("BlockedPrivateApi")
+    private void restartTaskTopActivityProcessIfVisible(int taskId) throws Exception {
+        List<ActivityManager.RecentTaskInfo> tasks = getRecentTasks(50, 0, 0);
+        if (tasks == null) throw new IllegalStateException("recent tasks unavailable");
+
+        Object taskToken = null;
+        for (ActivityManager.RecentTaskInfo taskInfo : tasks) {
+            int currentTaskId = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? taskInfo.taskId : taskInfo.persistentId;
+            if (currentTaskId != taskId) continue;
+            Field tokenField = TaskInfo.class.getDeclaredField("token");
+            tokenField.setAccessible(true);
+            taskToken = tokenField.get(taskInfo);
+            break;
+        }
+        if (taskToken == null) throw new IllegalStateException("task token unavailable: " + taskId);
+
+        Class<?> taskOrganizerClass = Class.forName("android.window.TaskOrganizer");
+        Object taskOrganizer = taskOrganizerClass.getDeclaredConstructor().newInstance();
+        Method restartMethod = taskOrganizerClass.getMethod(
+                "restartTaskTopActivityProcessIfVisible", taskToken.getClass());
+        restartMethod.invoke(taskOrganizer, taskToken);
+        L.i("requested moved task activity recreation, taskId=" + taskId);
+    }
+
+    @SuppressLint("BlockedPrivateApi")
+    private static void forceTaskRelayout(int taskId) throws Exception {
+        Object activityTaskManager = Class.forName("android.app.ActivityTaskManager")
+                .getDeclaredMethod("getService")
+                .invoke(null);
+        try {
+            activityTaskManager.getClass()
+                    .getMethod("setTaskWindowingMode", int.class, int.class, boolean.class)
+                    .invoke(activityTaskManager, taskId, 1, true);
+        } catch (Exception e) {
+            L.w("set fullscreen task mode during relayout failed", unwrapReflectionError(e));
+        }
+        Class<?> rectClass = Class.forName("android.graphics.Rect");
+        Object result = activityTaskManager.getClass()
+                .getMethod("resizeTask", int.class, rectClass, int.class)
+                .invoke(activityTaskManager, taskId, null, 1);
+        if (result instanceof Boolean && !((Boolean) result)) {
+            throw new IllegalStateException("resizeTask returned false");
+        }
+    }
+
+    private static Throwable unwrapReflectionError(Exception error) {
+        if (error instanceof InvocationTargetException
+                && ((InvocationTargetException) error).getTargetException() != null) {
+            return ((InvocationTargetException) error).getTargetException();
+        }
+        return error;
     }
 
     public String getAppMainActivity(String packageName) {

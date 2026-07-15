@@ -8,10 +8,14 @@
   <string name="main_float_permission">请授予悬浮窗权限\n否则软件功能不完整</string>
   <string name="main_float_permission_button">前往授权悬浮</string>
   <string name="main_no_float_mode_button">始终全屏模式</string>
+  <string name="main_embedded_mode_button">内嵌投屏模式</string>
   <string name="main_setting_default_detail">分辨率/帧率/编码</string>
   <string name="main_setting_display_detail">唤醒/背光/窗口</string>
   <string name="main_setting_other_detail">连接/USB/密钥</string>
   <string name="main_setting_about_detail">说明/版本/许可</string>
+  <string name="main_close_all_projections">关闭全部投屏</string>
+  <string name="main_no_active_projection">当前没有正在投屏</string>
+  <string name="main_close_all_complete">已关闭 %1$d 个投屏</string>
   <string name="dialog_close">关闭</string>
   <string name="main_device_summary_empty">未发现设备 · 点击 + 添加或配对</string>
   <string name="main_device_summary">已发现 %1$d 台 · 可连接 %2$d 台 · 检测中 %3$d 台</string>
@@ -98,6 +102,8 @@
   <string name="set_set_full_screen_detail">若不希望全屏模式时本机导航栏消失，可关闭</string>
   <string name="set_always_full_mode">始终全屏模式</string>
   <string name="set_always_full_mode_detail">始终以全屏模式连接设备，忽略在设备内设置的全屏启动(\u0022软件启动时打开\u0022仅支持打开一个默认设备)</string>
+  <string name="set_embedded_projection_mode">内嵌投屏模式</string>
+  <string name="set_embedded_projection_mode_detail">直接在主界面显示画面，不创建悬浮窗；屏幕镜像和应用流转合计只允许一个投屏</string>
   <string name="set_mirror_mode">安卓14兼容模式</string>
   <string name="set_mirror_mode_detail">安卓14及以上系统若出现画面异常可尝试开启此选项</string>
   <string name="set_force_desktop_mode">应用流转时强制桌面模式</string>
@@ -225,6 +231,9 @@
   <string name="error_device_not_found">未找到该设备</string>
   <string name="error_default_device_not_found">未找到默认设备</string>
   <string name="error_mode_not_support">始终全屏模式不支持</string>
+  <string name="error_embedded_single_session">内嵌投屏模式只允许一个投屏，请先关闭当前投屏</string>
+  <string name="error_embedded_host_unavailable">内嵌投屏需要主界面，请返回主界面后重试</string>
+  <string name="error_projection_mode_change_active">请先关闭当前投屏，再切换投屏窗口模式</string>
 
   <!-- 提示 -->
   <string name="tip_application_transfer">应用流转为实验性功能，部分手机系统可能不支持</string>
@@ -264,5 +273,19 @@
   <!-- 设备列表展开 -->
   <string name="start_display_mirroring">屏幕镜像</string>
   <string name="start_application_transfer">应用流转</string>
+
+  <!-- 内嵌投屏 -->
+  <string name="embedded_projection_connecting">正在连接设备</string>
+  <string name="embedded_toolbar_show">显示投屏工具栏</string>
+  <string name="embedded_toolbar_hide">隐藏投屏工具栏</string>
+  <string name="embedded_recent_apps">最近任务</string>
+  <string name="embedded_home">主页</string>
+  <string name="embedded_back">返回</string>
+  <string name="embedded_navigation_bar">显示或隐藏导航栏</string>
+  <string name="embedded_rotate">旋转被控端画面</string>
+  <string name="embedded_transfer">切换屏幕镜像或应用流转</string>
+  <string name="embedded_screen_light">切换被控端屏幕背光</string>
+  <string name="embedded_power">被控端电源键</string>
+  <string name="embedded_close">关闭投屏</string>
 
 </resources>

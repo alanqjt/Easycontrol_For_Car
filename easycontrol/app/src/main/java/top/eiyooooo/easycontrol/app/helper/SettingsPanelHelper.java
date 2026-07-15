@@ -14,6 +14,8 @@ import top.eiyooooo.easycontrol.app.LogActivity;
 import top.eiyooooo.easycontrol.app.MonitorActivity;
 import top.eiyooooo.easycontrol.app.R;
 import top.eiyooooo.easycontrol.app.StartDeviceActivity;
+import top.eiyooooo.easycontrol.app.client.Client;
+import top.eiyooooo.easycontrol.app.databinding.ItemSwitchBinding;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 
 public class SettingsPanelHelper {
@@ -193,7 +195,55 @@ public class SettingsPanelHelper {
     PublicTools.addSettingCard(connectionGroup, PublicTools.createSpinnerCard(context, context.getString(R.string.set_audio_channel), context.getString(R.string.set_audio_channel_detail), String.valueOf(AppData.setting.getAudioChannel()), audioChannelAdapter, str -> AppData.setting.setAudioChannel(Integer.parseInt(str))).getRoot());
     PublicTools.addSettingCard(connectionGroup, PublicTools.createSwitchCard(context, context.getString(R.string.set_enable_usb), context.getString(R.string.set_enable_usb_detail), AppData.setting.getEnableUSB(), isChecked -> AppData.setting.setEnableUSB(isChecked)).getRoot());
     PublicTools.addSettingCard(transferGroup, PublicTools.createSwitchCard(context, context.getString(R.string.set_set_full_screen), context.getString(R.string.set_set_full_screen_detail), AppData.setting.getSetFullScreen(), isChecked -> AppData.setting.setSetFullScreen(isChecked)).getRoot());
-    PublicTools.addSettingCard(transferGroup, PublicTools.createSwitchCard(context, context.getString(R.string.set_always_full_mode), context.getString(R.string.set_always_full_mode_detail), AppData.setting.getAlwaysFullMode(), isChecked -> AppData.setting.setAlwaysFullMode(isChecked)).getRoot());
+
+    if (AppData.setting.getEmbeddedProjectionMode() && AppData.setting.getAlwaysFullMode()) {
+      AppData.setting.setAlwaysFullMode(false);
+    }
+    ItemSwitchBinding embeddedModeCard = PublicTools.createSwitchCardEx(context,
+            context.getString(R.string.set_embedded_projection_mode),
+            context.getString(R.string.set_embedded_projection_mode_detail),
+            AppData.setting.getEmbeddedProjectionMode(), null);
+    ItemSwitchBinding alwaysFullModeCard = PublicTools.createSwitchCardEx(context,
+            context.getString(R.string.set_always_full_mode),
+            context.getString(R.string.set_always_full_mode_detail),
+            AppData.setting.getAlwaysFullMode(), null);
+    boolean[] syncingProjectionMode = {false};
+    embeddedModeCard.itemSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+      if (syncingProjectionMode[0]) return;
+      if (Client.hasActiveClients()) {
+        syncingProjectionMode[0] = true;
+        buttonView.setChecked(AppData.setting.getEmbeddedProjectionMode());
+        syncingProjectionMode[0] = false;
+        Toast.makeText(context, R.string.error_projection_mode_change_active, Toast.LENGTH_SHORT).show();
+        return;
+      }
+      AppData.setting.setEmbeddedProjectionMode(isChecked);
+      if (isChecked) {
+        AppData.setting.setAlwaysFullMode(false);
+        syncingProjectionMode[0] = true;
+        alwaysFullModeCard.itemSwitch.setChecked(false);
+        syncingProjectionMode[0] = false;
+      }
+    });
+    alwaysFullModeCard.itemSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+      if (syncingProjectionMode[0]) return;
+      if (Client.hasActiveClients()) {
+        syncingProjectionMode[0] = true;
+        buttonView.setChecked(AppData.setting.getAlwaysFullMode());
+        syncingProjectionMode[0] = false;
+        Toast.makeText(context, R.string.error_projection_mode_change_active, Toast.LENGTH_SHORT).show();
+        return;
+      }
+      AppData.setting.setAlwaysFullMode(isChecked);
+      if (isChecked) {
+        AppData.setting.setEmbeddedProjectionMode(false);
+        syncingProjectionMode[0] = true;
+        embeddedModeCard.itemSwitch.setChecked(false);
+        syncingProjectionMode[0] = false;
+      }
+    });
+    PublicTools.addSettingCard(transferGroup, embeddedModeCard.getRoot());
+    PublicTools.addSettingCard(transferGroup, alwaysFullModeCard.getRoot());
     PublicTools.addSettingCard(transferGroup, PublicTools.createSwitchCard(context, context.getString(R.string.set_mirror_mode), context.getString(R.string.set_mirror_mode_detail), AppData.setting.getNewMirrorMode(), isChecked -> AppData.setting.setNewMirrorMode(isChecked)).getRoot());
     PublicTools.addSettingCard(transferGroup, PublicTools.createSwitchCard(context, context.getString(R.string.set_force_desktop_mode), context.getString(R.string.set_force_desktop_mode_detail), AppData.setting.getForceDesktopMode(), isChecked -> AppData.setting.setForceDesktopMode(isChecked)).getRoot());
     PublicTools.addSettingCard(transferGroup, PublicTools.createSwitchCard(context, context.getString(R.string.set_try_start_default_in_app_transfer), context.getString(R.string.set_try_start_default_in_app_transfer_detail), AppData.setting.getTryStartDefaultInAppTransfer(), isChecked -> AppData.setting.setTryStartDefaultInAppTransfer(isChecked)).getRoot());

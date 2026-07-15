@@ -19,6 +19,7 @@ public final class WindowManager {
     private static Method freezeDisplayRotationMethod = null;
     private static Method isDisplayRotationFrozenMethod = null;
     private static Method thawDisplayRotationMethod = null;
+    private static Method setFixedToUserRotationMethod = null;
     private static int freezeDisplayRotationMethodVersion;
     private static int isDisplayRotationFrozenMethodVersion;
     private static int thawDisplayRotationMethodVersion;
@@ -209,6 +210,24 @@ public final class WindowManager {
             }
         } catch (Exception e) {
             L.e("Could not invoke method", e);
+        }
+    }
+
+    /**
+     * 固定副屏只使用用户指定的旋转角度，忽略应用自身请求的横竖屏方向。
+     */
+    public static boolean setFixedToUserRotation(int displayId, boolean fixed) {
+        try {
+            if (setFixedToUserRotationMethod == null) {
+                setFixedToUserRotationMethod = manager.getClass().getMethod(
+                        "setFixedToUserRotation", int.class, int.class);
+            }
+            // IWindowManager: DEFAULT=0, DISABLED=1, ENABLED=2。
+            setFixedToUserRotationMethod.invoke(manager, displayId, fixed ? 2 : 0);
+            return true;
+        } catch (Exception e) {
+            L.e("Could not set fixed-to-user rotation for display " + displayId, e);
+            return false;
         }
     }
 

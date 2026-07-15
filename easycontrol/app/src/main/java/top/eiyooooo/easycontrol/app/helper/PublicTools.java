@@ -382,10 +382,7 @@ public class PublicTools {
       if (setDefault) AppData.setting.setDefaultFull(isChecked);
       else device.defaultFull = isChecked;
     }).getRoot());
-    addSettingCard(codecDisplayGroup, createSwitchCard(context, context.getString(R.string.option_set_resolution), context.getString(R.string.option_set_resolution_detail), setDefault ? AppData.setting.getDefaultSetResolution() : device.setResolution, isChecked -> {
-      if (setDefault) AppData.setting.setDefaultSetResolution(isChecked);
-      else device.setResolution = isChecked;
-    }).getRoot());
+    // 显示尺寸由投屏模式决定：普通模式保持手机尺寸，内嵌流转在创建虚拟屏时适配车机。
 
     fatherLayout.addView(qualityGroup);
     if (startupGroup.getChildCount() > 1) fatherLayout.addView(startupGroup);

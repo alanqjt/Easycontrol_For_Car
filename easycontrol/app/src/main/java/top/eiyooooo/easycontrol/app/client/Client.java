@@ -27,6 +27,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import top.eiyooooo.easycontrol.app.MainActivity;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.EventMonitor;
@@ -40,6 +41,9 @@ import top.eiyooooo.easycontrol.app.client.view.ClientView;
 
 public class Client {
   private static final String AUDIO_LOG_TAG = "EasycontrolAudio";
+  private static final String DISPLAY_LOG_TAG = "EasycontrolDisplay";
+  private static final String DISPLAY_PROFILE_STANDARD = "standard-phone";
+  private static final String DISPLAY_PROFILE_EMBEDDED = "embedded-wide";
   // 状态，0 表示初始化中，1 表示已连接，-1 表示已关闭。
   private volatile int status = 0;
   // 当前进程里所有 Client 实例的集合，用于管理多连接场景。
@@ -48,6 +52,8 @@ public class Client {
   private static final Client[] audioOwners = new Client[2];
   private static final Object audioOwnerLock = new Object();
   private static final Object multiLinkLock = new Object();
+  private static final Object embeddedStartLock = new Object();
+  private static boolean embeddedStartReserved;
   private static final int AUDIO_OWNER_PRIORITY_NONE = Integer.MIN_VALUE;
   private static final int AUDIO_OWNER_PRIORITY_PRIMARY = 100;
   private static final int AUDIO_OWNER_PRIORITY_DIRECT_MIRROR = 200;
@@ -78,6 +84,7 @@ public class Client {
   public final ClientView clientView;
   public final String uuid;
   public final String sessionId = UUID.randomUUID().toString();
+  public final boolean embeddedMode;
   // 0 为屏幕镜像模式，1 为应用流转模式。
   public int mode = 0;
   public int displayId = 0;
@@ -100,9 +107,42 @@ public class Client {
   private static final boolean supportH265 = PublicTools.isDecoderSupport("hevc");
   private static final boolean supportOpus = PublicTools.isDecoderSupport("opus");
 
-  public Client(Device device, UsbDevice usbDevice, int mode) {
+  public static boolean start(Device device, UsbDevice usbDevice, int mode) {
+    boolean useEmbeddedMode = AppData.setting.getEmbeddedProjectionMode();
+    if (useEmbeddedMode) {
+      synchronized (embeddedStartLock) {
+        if (embeddedStartReserved || hasActiveClients()) {
+          Log.w("EasycontrolEmbedded", "embedded start rejected: active session exists"
+                  + ", uuid=" + device.uuid + ", mode=" + mode);
+          PublicTools.logToast(AppData.main.getString(R.string.error_embedded_single_session));
+          return false;
+        }
+        if (!MainActivity.isEmbeddedProjectionHostReady()) {
+          Log.w("EasycontrolEmbedded", "embedded start rejected: main host unavailable"
+                  + ", uuid=" + device.uuid + ", mode=" + mode);
+          PublicTools.logToast(AppData.main.getString(R.string.error_embedded_host_unavailable));
+          return false;
+        }
+        embeddedStartReserved = true;
+      }
+    }
+
+    try {
+      new Client(device, usbDevice, mode, useEmbeddedMode);
+      return true;
+    } finally {
+      if (useEmbeddedMode) {
+        synchronized (embeddedStartLock) {
+          embeddedStartReserved = false;
+        }
+      }
+    }
+  }
+
+  private Client(Device device, UsbDevice usbDevice, int mode, boolean embeddedMode) {
     // 初始化设备标识，后续多连接判断要优先使用它。
     uuid = device.uuid;
+    this.embeddedMode = embeddedMode;
     // 如果指定了转移模式，就先标记为已转移。
     if (mode == 0) specifiedTransferred = true;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -127,9 +167,10 @@ public class Client {
         executeStreamVideoThread.start();
       }
       AppData.uiHandler.post(this::executeOtherService);
-    }, () -> release(null));
+    }, () -> release(null), embeddedMode);
     // 显示加载中弹窗，提示用户正在连接。
-    Pair<View, WindowManager.LayoutParams> loading = PublicTools.createLoading(AppData.main);
+    Pair<View, WindowManager.LayoutParams> loading = embeddedMode || AppData.setting.getAlwaysFullMode()
+            ? null : PublicTools.createLoading(AppData.main);
     // 连接超时线程，防止连接卡死。
     loadingTimeOutThread = new Thread(() -> {
       try {
@@ -137,7 +178,7 @@ public class Client {
         if (!beginRelease(true)) return;
         if (startThread != null) startThread.interrupt();
         AppData.uiHandler.post(() -> {
-          if (loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
+          if (loading != null && loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
         });
         releaseResources(null);
       } catch (InterruptedException ignored) {
@@ -167,14 +208,15 @@ public class Client {
         AppData.uiHandler.post(() -> {
           if (releaseStarted.get()) return;
           if (device.nightModeSync) controlPacket.sendNightModeEvent(AppData.nightMode);
-          if (AppData.setting.getAlwaysFullMode() || device.defaultFull) clientView.changeToFull();
+          if (embeddedMode) clientView.changeToEmbedded();
+          else if (AppData.setting.getAlwaysFullMode() || device.defaultFull) clientView.changeToFull();
           else clientView.changeToSmall();
         });
       } catch (Exception e) {
         L.log(device.uuid, e);
         release(AppData.main.getString(R.string.log_notify));
       } finally {
-        if (!AppData.setting.getAlwaysFullMode()) AppData.uiHandler.post(() -> {
+        if (loading != null) AppData.uiHandler.post(() -> {
           if (loading.first.getParent() != null) AppData.windowManager.removeView(loading.first);
         });
         loadingTimeOutThread.interrupt();
@@ -186,8 +228,14 @@ public class Client {
       rebalanceMultiLinkModesLocked(device);
     }
     if (!EventMonitor.monitorRunning && AppData.setting.getMonitorState()) EventMonitor.startMonitor();
-    if (AppData.setting.getAlwaysFullMode()) PublicTools.logToast(AppData.main.getString(R.string.loading_text));
-    else AppData.windowManager.addView(loading.first, loading.second);
+    if (embeddedMode) {
+      Log.i("EasycontrolEmbedded", "embedded start accepted uuid=" + uuid + ", mode=" + mode);
+      clientView.showEmbeddedLoading();
+    } else if (AppData.setting.getAlwaysFullMode()) {
+      PublicTools.logToast(AppData.main.getString(R.string.loading_text));
+    } else {
+      AppData.windowManager.addView(loading.first, loading.second);
+    }
     loadingTimeOutThread.start();
     startThread.start();
   }
@@ -330,16 +378,187 @@ public class Client {
       else adb.runAdbCmd("settings put global force_desktop_mode_on_external_displays 0");
 
       // 让服务端创建一个可供应用转移使用的虚拟显示器。
-      String output = Adb.getStringResponseFromServer(device, "createVirtualDisplay");
+      VirtualDisplaySpec displaySpec = calculateVirtualDisplaySpec(device);
+      if (embeddedMode && displaySpec == null) {
+        Thread.sleep(200);
+        displaySpec = calculateVirtualDisplaySpec(device);
+        if (displaySpec == null) {
+          throw new IllegalStateException("embedded projection host size unavailable");
+        }
+      }
+      String profile = embeddedMode ? DISPLAY_PROFILE_EMBEDDED : DISPLAY_PROFILE_STANDARD;
+      String output;
+      if (displaySpec == null) {
+        Log.i(DISPLAY_LOG_TAG, "create virtual display"
+                + ", profile=" + profile
+                + ", uuid=" + uuid
+                + ", requested=phone-default"
+                + ", runtimeResize=false");
+        output = Adb.getStringResponseFromServer(device, "createVirtualDisplay",
+                "profile=" + profile);
+      } else {
+        Log.i(DISPLAY_LOG_TAG, "create virtual display"
+                + ", profile=" + profile
+                + ", uuid=" + uuid
+                + ", requested=" + displaySpec
+                + ", runtimeResize=false");
+        try {
+          output = Adb.getStringResponseFromServer(device, "createVirtualDisplay",
+                  "width=" + displaySpec.width,
+                  "height=" + displaySpec.height,
+                  "density=" + displaySpec.densityDpi,
+                  "profile=" + profile);
+        } catch (Exception e) {
+          Log.w(DISPLAY_LOG_TAG, "custom virtual display density rejected, retrying target size", e);
+          output = "";
+        }
+        if (!output.contains("success")) {
+          Log.w(DISPLAY_LOG_TAG, "custom virtual display density failed, response=" + output);
+          output = Adb.getStringResponseFromServer(device, "createVirtualDisplay",
+                  "width=" + displaySpec.width,
+                  "height=" + displaySpec.height,
+                  "profile=" + profile);
+        }
+      }
       if (output.contains("success")) {
         displayId = Integer.parseInt(output.substring(output.lastIndexOf(" -> ") + 4));
         clientView.displayId = displayId;
+        Log.i(DISPLAY_LOG_TAG, "virtual display policy response"
+                + ", profile=" + profile
+                + ", uuid=" + uuid
+                + ", response=" + output);
+        logCreatedDisplayConfiguration(device, displaySpec);
         changeMode(1);
         PublicTools.logToast(AppData.main.getString(R.string.tip_application_transfer));
       } else throw new Exception("");
-    } catch (Exception ignored) {
+    } catch (Exception e) {
+      Log.e(DISPLAY_LOG_TAG, "virtual display creation failed"
+              + ", profile=" + (embeddedMode ? DISPLAY_PROFILE_EMBEDDED : DISPLAY_PROFILE_STANDARD)
+              + ", uuid=" + uuid, e);
       changeMode(0);
       PublicTools.logToast(AppData.main.getString(R.string.error_create_display));
+    }
+  }
+
+  private VirtualDisplaySpec calculateVirtualDisplaySpec(Device device) {
+    try {
+      JSONArray displays = new JSONArray(Adb.getStringResponseFromServer(device, "getDisplayInfo"));
+      int sourceWidth = 0;
+      int sourceHeight = 0;
+      int sourceDensityDpi = 0;
+      for (int i = 0; i < displays.length(); i++) {
+        JSONObject display = displays.getJSONObject(i);
+        if (display.getInt("id") == 0) {
+          sourceWidth = display.getInt("width");
+          sourceHeight = display.getInt("height");
+          sourceDensityDpi = display.optInt("density", 0);
+          break;
+        }
+      }
+      if (sourceWidth <= 0 || sourceHeight <= 0 || sourceDensityDpi <= 0) return null;
+
+      if (!embeddedMode) {
+        Log.i(DISPLAY_LOG_TAG, "standard virtual display copies phone geometry"
+                + ", source=" + sourceWidth + "x" + sourceHeight
+                + "@" + sourceDensityDpi + "dpi");
+        return new VirtualDisplaySpec(sourceWidth, sourceHeight, sourceDensityDpi);
+      }
+
+      Pair<Integer, Integer> hostSize = MainActivity.getEmbeddedProjectionTargetSize();
+      int hostDensityDpi = MainActivity.getEmbeddedProjectionTargetDensityDpi();
+      if (hostSize == null) {
+        Log.w("EasycontrolEmbedded", "embedded host size unavailable");
+        return null;
+      }
+
+      float hostRatio = (float) hostSize.first / hostSize.second;
+      if (hostRatio < 0.25f || hostRatio > 4f) return null;
+      int longEdge = Math.max(sourceWidth, sourceHeight);
+      int width;
+      int height;
+      if (hostRatio >= 1f) {
+        width = longEdge;
+        height = Math.round(longEdge / hostRatio);
+      } else {
+        width = Math.round(longEdge * hostRatio);
+        height = longEdge;
+      }
+      width = alignDisplaySize(width);
+      height = alignDisplaySize(height);
+      int densityDpi = calculateEmbeddedDisplayDensity(
+              width, height, hostSize.first, hostSize.second, hostDensityDpi);
+      Log.i("EasycontrolEmbedded", "create virtual display with host ratio"
+              + ", host=" + hostSize.first + "x" + hostSize.second
+              + "@" + hostDensityDpi + "dpi"
+              + ", source=" + sourceWidth + "x" + sourceHeight
+              + ", target=" + width + "x" + height + "@" + densityDpi + "dpi"
+              + ", targetDp=" + Math.round(width * 160f / densityDpi)
+              + "x" + Math.round(height * 160f / densityDpi));
+      return new VirtualDisplaySpec(width, height, densityDpi);
+    } catch (Exception e) {
+      Log.w(DISPLAY_LOG_TAG, "failed to calculate virtual display size", e);
+      return null;
+    }
+  }
+
+  private static int alignDisplaySize(int value) {
+    return Math.max(16, (value + 8) & ~15);
+  }
+
+  private static int calculateEmbeddedDisplayDensity(int targetWidth, int targetHeight,
+                                                       int hostWidth, int hostHeight,
+                                                       int hostDensityDpi) {
+    if (hostDensityDpi <= 0) return 160;
+    float widthScale = (float) targetWidth / hostWidth;
+    float heightScale = (float) targetHeight / hostHeight;
+    int densityDpi = Math.round(hostDensityDpi * ((widthScale + heightScale) / 2f));
+    return Math.max(72, Math.min(1000, densityDpi));
+  }
+
+  private void logCreatedDisplayConfiguration(Device device, VirtualDisplaySpec requestedSpec) {
+    try {
+      JSONArray displays = new JSONArray(Adb.getStringResponseFromServer(device, "getDisplayInfo"));
+      for (int i = 0; i < displays.length(); i++) {
+        JSONObject display = displays.getJSONObject(i);
+        if (display.optInt("id", -1) != displayId) continue;
+        int actualWidth = display.optInt("width");
+        int actualHeight = display.optInt("height");
+        int actualRotation = display.optInt("rotation");
+        boolean geometryMismatch = requestedSpec != null
+                && (actualWidth != requestedSpec.width || actualHeight != requestedSpec.height);
+        String message = "virtual display ready"
+                + ", profile=" + (embeddedMode ? DISPLAY_PROFILE_EMBEDDED : DISPLAY_PROFILE_STANDARD)
+                + ", id=" + displayId
+                + ", requested=" + (requestedSpec == null ? "phone-default" : requestedSpec)
+                + ", actual=" + actualWidth + "x" + actualHeight
+                + "@" + display.optInt("density") + "dpi"
+                + ", rotation=" + actualRotation
+                + ", geometryMismatch=" + geometryMismatch
+                + ", runtimeResize=false";
+        if (geometryMismatch || actualRotation != 0) Log.w(DISPLAY_LOG_TAG, message);
+        else Log.i(DISPLAY_LOG_TAG, message);
+        return;
+      }
+      Log.w(DISPLAY_LOG_TAG, "created virtual display not found in display info, id=" + displayId);
+    } catch (Exception e) {
+      Log.w(DISPLAY_LOG_TAG, "failed to read created virtual display configuration", e);
+    }
+  }
+
+  private static final class VirtualDisplaySpec {
+    final int width;
+    final int height;
+    final int densityDpi;
+
+    VirtualDisplaySpec(int width, int height, int densityDpi) {
+      this.width = width;
+      this.height = height;
+      this.densityDpi = densityDpi;
+    }
+
+    @Override
+    public String toString() {
+      return width + "x" + height + "@" + densityDpi + "dpi";
     }
   }
 
@@ -385,9 +604,8 @@ public class Client {
             String output = Adb.getStringResponseFromServer(device, "openAppByPackage", "package=" + device.specified_app, "displayId=" + displayId);
             if (output.contains("failed")) throw new Exception("");
           } else {
-            // 已经运行的应用则直接移动任务栈。
-            String output = adb.runAdbCmd("am display move-stack " + appTaskId + " " + displayId);
-            if (output.contains("Exception")) throw new Exception("");
+            // 从最近任务正式启动到目标显示器，让应用收到目标屏尺寸和 DPI 配置。
+            moveFlowTaskToDisplay(device, appTaskId, device.specified_app);
           }
           specifiedTransferred = true;
         }
@@ -405,8 +623,15 @@ public class Client {
               }
             }
           }
-          String output = adb.runAdbCmd("am display move-stack " + targetTaskId + " " + displayId);
-          if (output.contains("Exception")) throw new Exception("");
+          String targetPackage = "";
+          for (int i = 0; i < tasksArray.length(); i++) {
+            JSONObject task = tasksArray.getJSONObject(i);
+            if (task.optInt("taskId", 0) == targetTaskId) {
+              targetPackage = task.optString("topPackage", "");
+              break;
+            }
+          }
+          moveFlowTaskToDisplay(device, targetTaskId, targetPackage);
         } else throw new Exception("");
       }
     } catch (Exception ignored) {
@@ -414,6 +639,23 @@ public class Client {
       changeMode(0);
       PublicTools.logToast(AppData.main.getString(R.string.error_transfer_app_failed));
     }
+  }
+
+  private void moveFlowTaskToDisplay(Device device, int taskId, String packageName) throws Exception {
+    ArrayList<String> parameters = new ArrayList<>();
+    parameters.add("taskId=" + taskId);
+    parameters.add("displayId=" + displayId);
+    if (packageName != null && !packageName.isEmpty()) parameters.add("package=" + packageName);
+    if (embeddedMode) parameters.add("recreate=1");
+    String output = Adb.getStringResponseFromServer(
+            device, "moveTaskToDisplay", parameters.toArray(new String[0]));
+    Log.i(DISPLAY_LOG_TAG, "flow task moved"
+            + ", profile=" + (embeddedMode ? DISPLAY_PROFILE_EMBEDDED : DISPLAY_PROFILE_STANDARD)
+            + ", taskId=" + taskId
+            + ", package=" + packageName
+            + ", displayId=" + displayId
+            + ", response=" + output);
+    if (!output.contains("success")) throw new IllegalStateException(output);
   }
 
   // 连接Server
@@ -696,6 +938,29 @@ public class Client {
     return status == -1 || clientView == null;
   }
 
+  public static boolean hasActiveClients() {
+    for (Client client : allClient) {
+      if (!client.isClosed()) return true;
+    }
+    return false;
+  }
+
+  public static int releaseAll() {
+    ArrayList<Client> activeClients = new ArrayList<>();
+    for (Client client : allClient) {
+      if (!client.isClosed()) activeClients.add(client);
+    }
+    Log.i(DISPLAY_LOG_TAG, "release all projections requested, activeClients=" + activeClients.size());
+    for (Client client : activeClients) client.release(null);
+    return activeClients.size();
+  }
+
+  public static void releaseEmbeddedSessions() {
+    for (Client client : allClient) {
+      if (!client.isClosed() && client.embeddedMode) client.release(null);
+    }
+  }
+
   public static Client findBySessionId(String sessionId) {
     if (sessionId == null) return null;
     for (Client client : allClient) {
@@ -708,7 +973,6 @@ public class Client {
     if (isClosed()) return;
     if (this.mode == mode) return;
     this.mode = mode;
-    clientView.changeSizeLock.set(false);
     if (mode == 0) {
       try {
         Adb.getStringResponseFromServer(clientView.device, "releaseVirtualDisplay", "id=" + displayId);
@@ -728,10 +992,6 @@ public class Client {
         if (isClosed()) return;
         controlPacket.sendConfigChangedEvent(-displayId);
         if (mode != 0) appTransfer(clientView.device);
-        synchronized (clientView.changeSizeLock) {
-          clientView.changeSizeLock.set(true);
-          clientView.changeSizeLock.notifyAll();
-        }
       } catch (Exception ignored) {
       }
     }).start();

@@ -331,24 +331,28 @@ public class DeviceListAdapter {
     }
   }
 
-  public static void startDevice(Device device, int mode) {
+  public static boolean startDevice(Device device, int mode) {
     if (device.isLinkDevice()) {
       UsbDevice usbDevice = linkDevices.get(device.uuid);
-      if (usbDevice == null) return;
-      new Client(device, usbDevice, mode);
-    } else new Client(device, null, mode);
+      if (usbDevice == null) return false;
+      return Client.start(device, usbDevice, mode);
+    }
+    return Client.start(device, null, mode);
   }
 
   public static void startDefault(int mode) {
     boolean started = false;
     for (Device device : devicesList) {
       if (device.connectOnStart) {
-        startDevice(device, mode);
-        started = true;
-        if (AppData.setting.getAlwaysFullMode()) break;
+        boolean deviceStarted = startDevice(device, mode);
+        started = started || deviceStarted;
+        if (deviceStarted && (AppData.setting.getAlwaysFullMode()
+                || AppData.setting.getEmbeddedProjectionMode())) break;
       }
     }
-    if (started && !AppData.setting.getAlwaysFullMode() && AppData.setting.getAutoBackOnStartDefault()) {
+    if (started && !AppData.setting.getAlwaysFullMode()
+            && !AppData.setting.getEmbeddedProjectionMode()
+            && AppData.setting.getAutoBackOnStartDefault()) {
       Intent home = new Intent(Intent.ACTION_MAIN);
       home.addCategory(Intent.CATEGORY_HOME);
       AppData.activity.startActivity(home);

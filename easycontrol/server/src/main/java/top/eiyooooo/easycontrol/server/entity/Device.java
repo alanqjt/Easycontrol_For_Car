@@ -69,6 +69,11 @@ public final class Device {
         deviceRotation = displayInfo.rotation;
         layerStack = displayInfo.layerStack;
         getVideoSize();
+        L.i("capture display config, id=" + displayId
+                + ", logical=" + deviceSize.first + "x" + deviceSize.second
+                + "@" + displayInfo.density + "dpi"
+                + ", rotation=" + deviceRotation
+                + ", video=" + videoSize.first + "x" + videoSize.second);
     }
 
     public static void handleConfigChanged(int mode) {

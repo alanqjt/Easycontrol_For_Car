@@ -8,10 +8,14 @@
   <string name="main_float_permission">Please grant floating window permission.\nOtherwise, the software functions are incomplete.</string>
   <string name="main_float_permission_button">Go authorize</string>
   <string name="main_no_float_mode_button">Always full</string>
+  <string name="main_embedded_mode_button">Embedded projection</string>
   <string name="main_setting_default_detail">Size/FPS/codec</string>
   <string name="main_setting_display_detail">Wake/backlight/window</string>
   <string name="main_setting_other_detail">Connect/USB/key</string>
   <string name="main_setting_about_detail">Guide/version/license</string>
+  <string name="main_close_all_projections">Stop all projections</string>
+  <string name="main_no_active_projection">No active projection</string>
+  <string name="main_close_all_complete">Stopped %1$d projection(s)</string>
   <string name="dialog_close">Close</string>
   <string name="main_device_summary_empty">No device found · tap + to add or pair</string>
   <string name="main_device_summary">Found %1$d · Ready %2$d · Checking %3$d</string>
@@ -98,6 +102,8 @@
   <string name="set_set_full_screen_detail">If you do not want the native navigation bar to disappear when in full screen mode, you can turn this off</string>
   <string name="set_always_full_mode">Always full screen mode</string>
   <string name="set_always_full_mode_detail">Always connect to the device in full screen mode, ignoring \u0022Default full screen\u0022 settings in the device (Only one default device can be opened when the software starts)</string>
+  <string name="set_embedded_projection_mode">Embedded projection mode</string>
+  <string name="set_embedded_projection_mode_detail">Show the remote screen inside the main page without an overlay window. Only one screen mirror or app transfer session is allowed.</string>
   <string name="set_mirror_mode">Android 14 compatibility mode</string>
   <string name="set_mirror_mode_detail">If display issues occur on Android 14 and above, try enabling this option</string>
   <string name="set_force_desktop_mode">Force desktop mode when using application transfer</string>
@@ -225,6 +231,9 @@
   <string name="error_device_not_found">Device not found</string>
   <string name="error_default_device_not_found">Default device not found</string>
   <string name="error_mode_not_support">Not supported in always full screen mode</string>
+  <string name="error_embedded_single_session">Embedded projection allows only one session. Close the current projection first.</string>
+  <string name="error_embedded_host_unavailable">Embedded projection needs the main page. Return to the main page and try again.</string>
+  <string name="error_projection_mode_change_active">Close the current projection before changing window mode.</string>
 
   <!-- 提示 -->
   <string name="tip_application_transfer">Application transfer is an experimental feature, and some mobile phone systems do not support it</string>
@@ -264,5 +273,19 @@
   <!-- 设备列表展开 -->
   <string name="start_display_mirroring">Display mirroring</string>
   <string name="start_application_transfer">Application transfer</string>
+
+  <!-- Embedded projection -->
+  <string name="embedded_projection_connecting">Connecting to device</string>
+  <string name="embedded_toolbar_show">Show projection toolbar</string>
+  <string name="embedded_toolbar_hide">Hide projection toolbar</string>
+  <string name="embedded_recent_apps">Recent apps</string>
+  <string name="embedded_home">Home</string>
+  <string name="embedded_back">Back</string>
+  <string name="embedded_navigation_bar">Show or hide navigation bar</string>
+  <string name="embedded_rotate">Rotate remote screen</string>
+  <string name="embedded_transfer">Switch screen mirroring or app transfer</string>
+  <string name="embedded_screen_light">Toggle remote screen backlight</string>
+  <string name="embedded_power">Remote power key</string>
+  <string name="embedded_close">Close projection</string>
 
 </resources>

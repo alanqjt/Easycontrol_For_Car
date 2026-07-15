@@ -3,6 +3,8 @@ package top.eiyooooo.easycontrol.app.client.view;
 import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.graphics.SurfaceTexture;
+import android.os.Looper;
+import android.util.Log;
 import android.util.Pair;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -15,15 +17,12 @@ import android.view.animation.OvershootInterpolator;
 
 import androidx.annotation.NonNull;
 
-import org.json.JSONArray;
-import top.eiyooooo.easycontrol.app.adb.Adb;
 import top.eiyooooo.easycontrol.app.client.Client;
 import top.eiyooooo.easycontrol.app.client.ControlPacket;
 import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
 import top.eiyooooo.easycontrol.app.helper.PublicTools;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * 类 ClientView
  * 说明：该类负责 ClientView 相关功能。
@@ -43,9 +42,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
 
   private final SmallView smallView;
   private final MiniView miniView;
+  private final EmbeddedView embeddedView;
   private FullActivity fullView;
+  private final boolean embeddedMode;
 
-  private Pair<Integer, Integer> realDeviceSize;
   private Pair<Integer, Integer> videoSize;
   private Pair<Integer, Integer> maxSize;
   private Pair<Integer, Integer> surfaceSize;
@@ -53,18 +53,27 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   boolean lightState;
   public int multiLink = 0;
 
-  public ClientView(Device device, ControlPacket controlPacket, PublicTools.MyFunctionInt changeMode, PublicTools.MyFunction onReady, PublicTools.MyFunction onClose) {
+  public ClientView(Device device, ControlPacket controlPacket, PublicTools.MyFunctionInt changeMode,
+                    PublicTools.MyFunction onReady, PublicTools.MyFunction onClose,
+                    boolean embeddedMode) {
     lightState = !AppData.setting.getTurnOffScreenIfStart();
+    this.embeddedMode = embeddedMode;
     this.deviceOriginal = device;
     this.device = new Device(device.uuid, device.type);
     Device.copyDevice(device, this.device);
     textureView = new TextureView(AppData.main);
-    if (!AppData.setting.getAlwaysFullMode()) {
+    if (embeddedMode) {
+      smallView = null;
+      miniView = null;
+      embeddedView = new EmbeddedView(this);
+    } else if (!AppData.setting.getAlwaysFullMode()) {
       smallView = new SmallView(this);
       miniView = new MiniView(this);
+      embeddedView = null;
     } else {
       smallView = null;
       miniView = null;
+      embeddedView = null;
     }
     this.controlPacket = controlPacket;
     this.changeMode = changeMode;
@@ -73,6 +82,7 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     setTouchListener();
     textureView.setSurfaceTextureListener(this);
     if (smallView != null) smallView.changeMode(mode);
+    if (embeddedView != null) embeddedView.changeMode(mode);
   }
 
   public void updateDevice() {
@@ -81,88 +91,15 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     AppData.dbHelper.update(device);
   }
 
-  public final AtomicBoolean changeSizeLock = new AtomicBoolean(false);
-  public void changeSize(float ratio) {
-    new Thread(() -> {
-      if (!changeSizeLock.get()) {
-        try {
-          synchronized (changeSizeLock) {
-            changeSizeLock.wait(5000);
-          }
-        } catch (InterruptedException ignored) {
-        }
-      }
-      if (!changeSizeLock.get() || mode == 0 || displayId == 0) return;
-      try {
-        float targetRatio = ratio;
-        if (targetRatio > 4 || targetRatio < 0.25) return;
-
-        if (realDeviceSize == null) {
-          String displayInfo = Adb.getStringResponseFromServer(device, "getDisplayInfo");
-          JSONArray jsonArray = new JSONArray(displayInfo);
-          for (int i = 0; i < jsonArray.length(); i++) {
-            if (jsonArray.getJSONObject(i).getInt("id") == 0) {
-              int width = jsonArray.getJSONObject(i).getInt("width");
-              int height = jsonArray.getJSONObject(i).getInt("height");
-              int rotation = jsonArray.getJSONObject(i).getInt("rotation");
-              if (rotation == 1 || rotation == 3) realDeviceSize = new Pair<>(height, width);
-              else realDeviceSize = new Pair<>(width, height);
-              break;
-            }
-          }
-        }
-        if (realDeviceSize == null) return;
-
-        Pair<Integer, Integer> deviceSize = null;
-        String displayInfo = Adb.getStringResponseFromServer(device, "getDisplayInfo");
-        JSONArray jsonArray = new JSONArray(displayInfo);
-        for (int i = 0; i < jsonArray.length(); i++) {
-          if (jsonArray.getJSONObject(i).getInt("id") == displayId) {
-            int width = jsonArray.getJSONObject(i).getInt("width");
-            int height = jsonArray.getJSONObject(i).getInt("height");
-            deviceSize = new Pair<>(width, height);
-            break;
-          }
-        }
-        if (deviceSize == null) return;
-
-        int rotation = targetRatio > 1 ? 1 : 0;
-
-        if (targetRatio > 1) targetRatio = 1 / targetRatio;
-
-        float ratioChange = targetRatio / ((float) realDeviceSize.first / realDeviceSize.second);
-
-        int newWidth, newHeight;
-        if (realDeviceSize.first < realDeviceSize.second) {
-          newWidth = (int) (realDeviceSize.first * ratioChange);
-          newHeight = realDeviceSize.second;
-        } else {
-          newWidth = realDeviceSize.first;
-          newHeight = (int) (realDeviceSize.second * ratioChange);
-        }
-        newWidth = newWidth + 8 & ~15;
-        newHeight = newHeight + 8 & ~15;
-        if (newWidth == newHeight) newWidth -= 16;
-
-        if (mode == 0 || displayId == 0) return;
-        String output = Adb.getStringResponseFromServer(device, "resizeDisplay", "width=" + newWidth, "height=" + newHeight, "id=" + displayId);
-
-        if (output.contains("success")) {
-          Thread.sleep(500);
-          if (displayId == 0) controlPacket.sendConfigChangedEvent(1);
-          else controlPacket.sendConfigChangedEvent(2);
-          Thread.sleep(300);
-          controlPacket.sendRotateEvent(rotation);
-        }
-      } catch (Exception ignored) {
-      }
-    }).start();
-  }
-
   public void changeMode(int mode) {
     this.mode = mode;
-    if (smallView != null) smallView.changeMode(mode);
-    if (fullView != null) fullView.changeMode(mode);
+    Runnable updateView = () -> {
+      if (smallView != null) smallView.changeMode(mode);
+      if (fullView != null) fullView.changeMode(mode);
+      if (embeddedView != null) embeddedView.changeMode(mode);
+    };
+    if (Looper.myLooper() == Looper.getMainLooper()) updateView.run();
+    else AppData.uiHandler.post(updateView);
   }
 
   /**
@@ -171,10 +108,16 @@ public class ClientView implements TextureView.SurfaceTextureListener {
    * 2:Small
    * <p>
    * 3:Full
+   * <p>
+   * 4:Embedded
    */
   public int viewMode;
   public boolean needResumeToSmall = false;
   public synchronized void changeToFull() {
+    if (embeddedView != null) {
+      changeToEmbedded();
+      return;
+    }
     Client target = null;
     for (Client client : Client.allClient) {
       if (client.clientView == this && !client.isClosed()) {
@@ -192,6 +135,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   }
 
   public synchronized void changeToSmall() {
+    if (embeddedView != null) {
+      changeToEmbedded();
+      return;
+    }
     needResumeToSmall = false;
     if (smallView == null) return;
     hide(false);
@@ -200,6 +147,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   }
 
   public synchronized void changeToMini(int mode) {
+    if (embeddedView != null) {
+      changeToEmbedded();
+      return;
+    }
     if (miniView == null) return;
     hide(false);
     miniView.show(mode);
@@ -210,6 +161,7 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     if (fullView != null) fullView.hide();
     if (smallView != null) smallView.hide();
     if (miniView != null) miniView.hide();
+    if (embeddedView != null) embeddedView.hide();
     if (isRelease && surfaceTexture != null) {
       surfaceTexture.release();
       surfaceTexture = null;
@@ -220,12 +172,36 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     this.fullView = fullView;
   }
 
+  public synchronized void changeToEmbedded() {
+    if (embeddedView == null) return;
+    embeddedView.show();
+    viewMode = 4;
+  }
+
+  public void showEmbeddedLoading() {
+    if (embeddedView == null) return;
+    if (Looper.myLooper() == Looper.getMainLooper()) embeddedView.showLoading();
+    else AppData.uiHandler.post(embeddedView::showLoading);
+  }
+
+  public void restoreEmbedded(boolean streamReady) {
+    if (embeddedView != null) embeddedView.restore(streamReady);
+  }
+
+  public boolean isEmbeddedMode() {
+    return embeddedMode;
+  }
+
   private static final float aspectRatioThreshold = 0.15f;
 
   public void updateMaxSize(Pair<Integer, Integer> maxSize) {
     if (maxSize == null || maxSize.first == 0 || maxSize.second == 0) return;
     this.maxSize = maxSize;
-    if (fullView != null && fullView.fullMaxSize != null && (AppData.setting.getFillFull() || (mode == 1 && device.setResolution))) {
+    if (embeddedMode) {
+      reCalculateEmbeddedTextureViewSize();
+      return;
+    }
+    if (fullView != null && fullView.fullMaxSize != null && AppData.setting.getFillFull()) {
       if (videoSize != null) {
         float fullMaxAspectRatio = (float) fullView.fullMaxSize.first / fullView.fullMaxSize.second;
         float videoAspectRatio = (float) videoSize.first / videoSize.second;
@@ -241,7 +217,11 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   public void updateVideoSize(Pair<Integer, Integer> videoSize) {
     if (videoSize == null || videoSize.first == 0 || videoSize.second == 0) return;
     this.videoSize = videoSize;
-    if (fullView != null && fullView.fullMaxSize != null && (AppData.setting.getFillFull() || (mode == 1 && device.setResolution))) {
+    if (embeddedMode && maxSize != null) {
+      reCalculateEmbeddedTextureViewSize();
+      return;
+    }
+    if (fullView != null && fullView.fullMaxSize != null && AppData.setting.getFillFull()) {
       float fullMaxAspectRatio = (float) fullView.fullMaxSize.first / fullView.fullMaxSize.second;
       float videoAspectRatio = (float) videoSize.first / videoSize.second;
       if (Math.abs(fullMaxAspectRatio - videoAspectRatio) < aspectRatioThreshold) {
@@ -258,6 +238,31 @@ public class ClientView implements TextureView.SurfaceTextureListener {
 
   public Pair<Integer, Integer> getMaxSize() {
     return maxSize;
+  }
+
+  private void reCalculateEmbeddedTextureViewSize() {
+    if (maxSize == null || videoSize == null) return;
+    reCalculateTextureViewSize();
+    float videoRatio = (float) videoSize.first / videoSize.second;
+    float hostRatio = (float) maxSize.first / maxSize.second;
+    boolean flowRatioMismatch = mode == 1
+            && Math.abs(videoRatio - hostRatio) >= aspectRatioThreshold;
+    String message = "embedded stream geometry"
+            + ", uuid=" + device.uuid
+            + ", mode=" + mode
+            + ", video=" + videoSize.first + "x" + videoSize.second
+            + ", host=" + maxSize.first + "x" + maxSize.second
+            + ", surface=" + surfaceSize.first + "x" + surfaceSize.second
+            + ", videoRatio=" + videoRatio
+            + ", hostRatio=" + hostRatio
+            + ", scale=fit-center"
+            + ", flowRatioMismatch=" + flowRatioMismatch;
+    if (flowRatioMismatch) {
+      Log.w("EasycontrolEmbedded", message
+              + ", reason=virtual-display-or-capture-did-not-switch-to-embedded-wide");
+    } else {
+      Log.i("EasycontrolEmbedded", message);
+    }
   }
 
   public Surface getSurface() {
