@@ -2,6 +2,7 @@ package top.eiyooooo.easycontrol.server;
 
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
+import android.os.Build;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.view.Display;
@@ -20,47 +21,75 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class Scrcpy {
     // 线程同步对象，用来在连接断开时唤醒主线程退出。
     private static final Object object = new Object();
     // 空闲超时阈值，避免连接断开后进程一直挂着。
     private static final int timeoutDelay = 5 * 1000;
+    // 首次建立 socket 可以稍慢，但不能在厂商初始化过程中并发释放资源。
+    private static final int startupTimeoutDelay = 15 * 1000;
+    private static final AtomicBoolean releaseStarted = new AtomicBoolean(false);
 
     public static void main(String... args) {
         // 服务端日志模式，便于在 shell 里直接看输出。
         L.logMode = 1;
+        L.i("scrcpy stage=entry, sdk=" + Build.VERSION.SDK_INT
+                + ", brand=" + Build.BRAND
+                + ", model=" + Build.MODEL
+                + ", args=" + Arrays.toString(args));
         // 打开日志输出。
         L.postLog();
+        Thread timeOutThread = null;
         try {
-            // 超时线程：如果一段时间内没有心跳，就主动释放。
-            Thread timeOutThread = new Thread(() -> {
+            // 先解析参数，再尽快绑定 socket；厂商兼容初始化放到连接建立之后。
+            Options.parse(args);
+            L.i("scrcpy stage=options-parsed, displayId=" + Options.displayId
+                    + ", mirrorMode=" + Options.mirrorMode
+                    + ", audio=" + Options.isAudio
+                    + ", audioProtocol=" + Options.audioProtocol
+                    + ", audioSplit=" + Options.audioSplit);
+
+            // watchdog 只保护首次 socket 连接。连接成功后立即停止，不能与初始化并发 release()。
+            timeOutThread = new Thread(() -> {
                 try {
-                    Thread.sleep(timeoutDelay);
+                    Thread.sleep(startupTimeoutDelay);
+                    L.w("scrcpy stage=socket-timeout");
                     release();
                 } catch (InterruptedException ignored) {
                 }
-            });
+            }, "easycontrol_startup_watchdog");
             timeOutThread.start();
-            // 解析启动参数，控制音频、视频、码率等行为。
-            Options.parse(args);
-            // 初始化兼容性修正和系统服务。
-            Workarounds.apply(1);
-            ServiceManager.setManagers();
-            Device.init();
-            // 先建立本地 socket 连接，再启动编码和控制线程。
+
+            L.i("scrcpy stage=socket-waiting");
             connectClient();
+            L.i("scrcpy stage=socket-connected");
+            timeOutThread.interrupt();
+            timeOutThread = null;
+
+            // 初始化兼容性修正和系统服务。
+            L.i("scrcpy stage=workarounds-start");
+            Workarounds.apply(1);
+            L.i("scrcpy stage=workarounds-ready");
+            ServiceManager.setManagers();
+            L.i("scrcpy stage=services-ready");
+            Device.init();
+            L.i("scrcpy stage=device-ready, displayId=" + Device.displayId
+                    + ", video=" + Device.videoSize.first + "x" + Device.videoSize.second);
             // 初始化音频和视频编码子服务。
             AudioEncode.init();
+            L.i("scrcpy stage=audio-ready");
             VideoEncode.init();
+            L.i("scrcpy stage=video-ready");
             // 启动数据流线程。
             ArrayList<Thread> threads = new ArrayList<>();
             threads.add(new Thread(Scrcpy::executeVideoOut));
             threads.add(new Thread(Scrcpy::executeControlIn));
             for (Thread thread : threads) thread.setPriority(Thread.MAX_PRIORITY);
             for (Thread thread : threads) thread.start();
-            // 连接成功后，超时线程就不再需要了。
-            timeOutThread.interrupt();
+            L.i("scrcpy stage=streaming");
             if (Options.TurnOnScreenIfStart) {
                 // 启动时可选地点亮屏幕。
                 Device.keyEvent(224, 0, 0);
@@ -74,9 +103,10 @@ public final class Scrcpy {
             }
             // 收到退出信号后，中断所有工作线程。
             for (Thread thread : threads) thread.interrupt();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             L.e("startScrcpy error", e);
         } finally {
+            if (timeOutThread != null) timeOutThread.interrupt();
             // 不管是否异常，都尽量收尾释放。
             release();
         }
@@ -106,7 +136,9 @@ public final class Scrcpy {
     private static void connectClient() throws IOException {
         // 使用本地 socket 连接 app 端发起的客户端。
         try (LocalServerSocket serverSocket = new LocalServerSocket("easycontrol_for_car_scrcpy")) {
+            L.i("scrcpy stage=main-socket-accept");
             mainSocket = serverSocket.accept();
+            L.i("scrcpy stage=video-socket-accept");
             videoSocket = serverSocket.accept();
             mainFD = mainSocket.getFileDescriptor();
             videoFD = videoSocket.getFileDescriptor();
@@ -210,6 +242,8 @@ public final class Scrcpy {
 
     // 释放资源
     private static void release() {
+        if (!releaseStarted.compareAndSet(false, true)) return;
+        L.i("scrcpy stage=release-start");
         // 检查是不是最后一个 scrcpy 实例，决定是否恢复一些全局状态。
         boolean lastScrcpy = false;
         try {
@@ -219,17 +253,21 @@ public final class Scrcpy {
         }
 
         // 1. 先关闭 socket 与输入流。
-        try {
-            inputStream.close();
-            mainSocket.close();
-            videoSocket.close();
-        } catch (Exception e) {
-            L.e("release error", e);
-        }
+        closeQuietly(inputStream, "main input");
+        closeQuietly(mainSocket, "main socket");
+        closeQuietly(videoSocket, "video socket");
 
         // 2. 释放音视频编码器。
-        VideoEncode.release();
-        AudioEncode.release();
+        try {
+            VideoEncode.release();
+        } catch (Throwable e) {
+            L.e("release video error", e);
+        }
+        try {
+            AudioEncode.release();
+        } catch (Throwable e) {
+            L.e("release audio error", e);
+        }
 
         // 3. 恢复被修改过的屏幕尺寸、密度和夜间模式。
         if (Device.needReset) {
@@ -286,6 +324,15 @@ public final class Scrcpy {
         // 7
         L.d("scrcpy release success");
         System.exit(0);
+    }
+
+    private static void closeQuietly(AutoCloseable closeable, String name) {
+        if (closeable == null) return;
+        try {
+            closeable.close();
+        } catch (Throwable e) {
+            L.e("release " + name + " error", e);
+        }
     }
 
 }

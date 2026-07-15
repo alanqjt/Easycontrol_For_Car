@@ -49,5 +49,11 @@ android {
   buildToolsVersion '34.0.0'
 }
 
+// app 模块为兼容 Gradle 资源依赖会同时触发两个复制任务；它们写同一目标文件，
+// 必须固定顺序，避免 Android Studio 并行构建时生成损坏的 server JAR。
+tasks.named('copyRelease').configure {
+  mustRunAfter tasks.named('copyDebug')
+}
+
 dependencies {
 }

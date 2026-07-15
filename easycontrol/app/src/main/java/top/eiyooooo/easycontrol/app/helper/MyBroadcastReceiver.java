@@ -162,7 +162,10 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
     if (Objects.equals(action, UsbManager.ACTION_USB_DEVICE_DETACHED)) onCutUsb(usbDevice);
     if (AppData.setting.getEnableUSB()) {
         if (Objects.equals(action, UsbManager.ACTION_USB_DEVICE_ATTACHED)) onConnectUsb(context, usbDevice);
-        else if (Objects.equals(action, ACTION_USB_PERMISSION)) if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) onGetUsbPer(usbDevice);
+        else if (Objects.equals(action, ACTION_USB_PERMISSION)) {
+          if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) onGetUsbPer(usbDevice);
+          else L.log("USB", "USB permission denied: " + describeUsbDevice(usbDevice));
+        }
     }
   }
 
@@ -175,12 +178,22 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
   // 请求USB设备权限
   private void onConnectUsb(Context context, UsbDevice usbDevice) {
     if (AppData.usbManager==null)return;
+    if (hasUsbPermission(usbDevice)) {
+      L.log("USB", "USB permission already granted: " + describeUsbDevice(usbDevice));
+      onGetUsbPer(usbDevice);
+      return;
+    }
     Intent usbPermissionIntent = new Intent(ACTION_USB_PERMISSION);
     usbPermissionIntent.setPackage(AppData.main.getPackageName());
     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
     PendingIntent permissionIntent = PendingIntent.getBroadcast(context, usbDevice.getDeviceId(), usbPermissionIntent, flags);
-    AppData.usbManager.requestPermission(usbDevice, permissionIntent);
+    try {
+      AppData.usbManager.requestPermission(usbDevice, permissionIntent);
+    } catch (Exception e) {
+      L.log("USB", "USB permission request failed: " + describeUsbDevice(usbDevice));
+      L.log("USB", e);
+    }
   }
 
   // 当断开设备
@@ -202,7 +215,10 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
   // 处理USB授权结果
   private void onGetUsbPer(UsbDevice usbDevice) {
     // 有线设备使用序列号作为唯一标识符
-    if (!hasUsbPermission(usbDevice)) return;
+    if (!hasUsbPermission(usbDevice)) {
+      L.log("USB", "USB permission missing after callback: " + describeUsbDevice(usbDevice));
+      return;
+    }
     String uuid = getUsbUuid(usbDevice);
     if (uuid == null) return;
     // 查找ADB的接口
@@ -248,5 +264,13 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
     String deviceName = usbDevice.getDeviceName();
     if (deviceName != null && !deviceName.isEmpty()) return deviceName;
     return "usb-" + usbDevice.getVendorId() + "-" + usbDevice.getProductId();
+  }
+
+  private static String describeUsbDevice(UsbDevice usbDevice) {
+    if (usbDevice == null) return "device=null";
+    return "name=" + usbDevice.getDeviceName()
+            + ", deviceId=" + usbDevice.getDeviceId()
+            + ", vendor=0x" + Integer.toHexString(usbDevice.getVendorId())
+            + ", product=0x" + Integer.toHexString(usbDevice.getProductId());
   }
 }

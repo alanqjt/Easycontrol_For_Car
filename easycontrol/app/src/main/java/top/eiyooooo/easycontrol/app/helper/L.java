@@ -15,7 +15,7 @@ import java.util.Map;
 public class L {
     private static final Map<String, StringBuilder> logs = new HashMap<>();
 
-    public static void log(String uuid, String log) {
+    public static synchronized void log(String uuid, String log) {
         StringBuilder logBuilder = logs.get(uuid);
         if (logBuilder == null) {
             logBuilder = new StringBuilder();
@@ -25,12 +25,12 @@ public class L {
         logBuilder.append(log).append("\n");
     }
 
-    public static void log(String uuid, Throwable throwable) {
+    public static synchronized void log(String uuid, Throwable throwable) {
         String log = Log.getStackTraceString(throwable);
         log(uuid, log);
     }
 
-    public static void logWithoutTime(String uuid, String log) {
+    public static synchronized void logWithoutTime(String uuid, String log) {
         StringBuilder logBuilder = logs.get(uuid);
         if (logBuilder == null) {
             logBuilder = new StringBuilder();
@@ -39,12 +39,12 @@ public class L {
         logBuilder.append(log).append("\n");
     }
 
-    public static void logWithoutTime(String uuid, Throwable throwable) {
+    public static synchronized void logWithoutTime(String uuid, Throwable throwable) {
         String log = Log.getStackTraceString(throwable);
         logWithoutTime(uuid, log);
     }
 
-    public static String getLogs() {
+    public static synchronized String getLogs() {
         StringBuilder logBuilder = new StringBuilder();
         ArrayList<String> uuids = new ArrayList<>();
         for (Device device : DeviceListAdapter.devicesList) {
@@ -61,7 +61,7 @@ public class L {
         return "no log found";
     }
 
-    public static String getLogs(String uuid) {
+    public static synchronized String getLogs(String uuid) {
         StringBuilder logBuilder = logs.get(uuid);
         if (logBuilder != null) {
             return logBuilder.toString();

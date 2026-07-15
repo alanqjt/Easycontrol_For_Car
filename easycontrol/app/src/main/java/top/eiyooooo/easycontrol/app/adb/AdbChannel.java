@@ -14,6 +14,8 @@ public interface AdbChannel {
 
   ByteBuffer read(int size) throws IOException, InterruptedException;
 
+  int available() throws IOException;
+
   void close();
 
 }

@@ -10,6 +10,7 @@ import java.util.concurrent.LinkedBlockingDeque;
 
 public class Buffer {
   private volatile boolean isClosed = false;
+  private volatile IOException closeCause;
   private final LinkedBlockingDeque<ByteBuffer> dataQueue = new LinkedBlockingDeque<>();
 
   public void write(ByteBuffer data) {
@@ -17,13 +18,19 @@ public class Buffer {
     dataQueue.offerLast(data);
   }
 
+  public void writeFirst(ByteBuffer data) {
+    if (isClosed) return;
+    dataQueue.offerFirst(data);
+  }
+
   public synchronized ByteBuffer read(int len) throws InterruptedException, IOException {
-    if (len < 0 || isClosed) throw new IOException("Buffer error");
+    if (len < 0) throw new IOException("Invalid buffer read length: " + len);
+    if (isClosed) throw closedException();
     ByteBuffer data = ByteBuffer.allocate(len);
     int bytesToRead = len;
     while (bytesToRead > 0) {
       ByteBuffer tmpData = dataQueue.takeFirst();
-      if (isClosed) throw new IOException("Buffer error");
+      if (isClosed) throw closedException();
       int remaining = tmpData.remaining();
       if (remaining <= bytesToRead) {
         data.put(tmpData);
@@ -42,9 +49,9 @@ public class Buffer {
   }
 
   public synchronized ByteBuffer readNext() throws InterruptedException, IOException {
-    if (isClosed) throw new IOException("Buffer error");
+    if (isClosed) throw closedException();
     ByteBuffer byteBuffer = dataQueue.takeFirst();
-    if (isClosed) throw new IOException("Buffer error");
+    if (isClosed) throw closedException();
     return byteBuffer;
   }
 
@@ -65,9 +72,20 @@ public class Buffer {
   }
 
   public void close() {
+    close(null);
+  }
+
+  public void close(IOException cause) {
     if (isClosed) return;
+    closeCause = cause;
     isClosed = true;
     dataQueue.offer(ByteBuffer.allocate(0));
+  }
+
+  private IOException closedException() {
+    IOException cause = closeCause;
+    if (cause == null) return new IOException("Buffer closed");
+    return new IOException("Buffer closed: " + cause.getMessage(), cause);
   }
 
 }

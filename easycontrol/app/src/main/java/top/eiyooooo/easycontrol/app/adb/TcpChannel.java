@@ -51,6 +51,11 @@ public class TcpChannel implements AdbChannel {
   }
 
   @Override
+  public int available() throws IOException {
+    return inputStream.available();
+  }
+
+  @Override
   public void close() {
     try {
       outputStream.close();

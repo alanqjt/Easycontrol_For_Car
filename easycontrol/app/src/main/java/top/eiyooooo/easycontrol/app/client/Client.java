@@ -99,6 +99,8 @@ public class Client {
   private final Thread keepAliveThread;
   private static final int startupTimeoutDelay = 30 * 1000;
   private static final int keepAliveTimeoutDelay = 5 * 1000;
+  private static final int serverSocketConnectAttempts = 60;
+  private static final int serverSocketRetryDelay = 250;
   private long lastKeepAliveTime;
   // 0 为单连接，1 为多连接主，2 为多连接从。
   public int multiLink = 0;
@@ -258,7 +260,9 @@ public class Client {
             + (AppData.setting.getTurnOffScreenIfStop() ? 1 : 0) * 10
             + (AppData.setting.getTurnOnScreenIfStop() ? 1 : 0);
     StringBuilder cmd = new StringBuilder();
-    cmd.append("app_process -Djava.class.path=").append(serverName).append(" / top.eiyooooo.easycontrol.server.Scrcpy");
+    // 使用 Android 官方 app_process 常见的 CLASSPATH 形式。部分厂商 ROM 对
+    // -Djava.class.path 的处理不稳定，会在类加载阶段直接 SIGABRT。
+    cmd.append("CLASSPATH=").append(serverName).append(" app_process / top.eiyooooo.easycontrol.server.Scrcpy");
     boolean startAudio = shouldStartServerAudio(device);
     Log.i(AUDIO_LOG_TAG, "audio start decision " + audioClientDescription()
             + ", deviceAudio=" + device.isAudio
@@ -661,7 +665,7 @@ public class Client {
   // 连接Server
   private void connectServer() throws Exception {
     Thread.sleep(50);
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < serverSocketConnectAttempts; i++) {
       BufferStream controlStream = null;
       BufferStream pendingVideoStream = null;
       try {
@@ -673,12 +677,13 @@ public class Client {
           videoStream = pendingVideoStream;
           startupConnected = true;
         }
+        L.log(uuid, "scrcpy sockets connected, attempt=" + (i + 1));
         return;
       } catch (Exception ignored) {
         if (controlStream != null) controlStream.close();
         if (pendingVideoStream != null) pendingVideoStream.close();
         if (releaseStarted.get() || Thread.currentThread().isInterrupted()) throw new InterruptedException("client connection cancelled");
-        Thread.sleep(50);
+        Thread.sleep(serverSocketRetryDelay);
       }
     }
     throw new Exception(AppData.main.getString(R.string.error_connect_server));

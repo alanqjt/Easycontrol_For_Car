@@ -7,6 +7,8 @@ public class BufferStream {
   private volatile boolean isClosed = false;
   private volatile boolean canWrite;
   private final boolean canMultipleSend;
+  private final boolean requireWriteAck;
+  private final int maxWriteSize;
 
   private final Buffer source = new Buffer();
   private final Buffer sink = new Buffer();
@@ -15,8 +17,16 @@ public class BufferStream {
   // canWrite的设立，是为了兼容某些底层连接不能随时发送，例如adb协议规定需等待对方回复确认后才可以开始下一次发送，因此使用canWrite限制发送
   // canMultipleSend的设立，是为了兼容某些上层应用需逐次发送的场景，即上层的一次写入对应底层的一次写入，不会将上层多次写入合并在一起写入底层连接
   public BufferStream(boolean canWrite, boolean canMultipleSend, UnderlySocketFunction underlySocketFunction) throws Exception {
+    this(canWrite, canMultipleSend, false, Integer.MAX_VALUE, underlySocketFunction);
+  }
+
+  public BufferStream(boolean canWrite, boolean canMultipleSend, boolean requireWriteAck,
+                      int maxWriteSize, UnderlySocketFunction underlySocketFunction) throws Exception {
+    if (maxWriteSize <= 0) throw new IllegalArgumentException("maxWriteSize must be positive");
     this.canWrite = canWrite;
     this.canMultipleSend = canMultipleSend;
+    this.requireWriteAck = requireWriteAck;
+    this.maxWriteSize = maxWriteSize;
     this.underlySocketFunction = underlySocketFunction;
     underlySocketFunction.connect(this);
   }
@@ -75,7 +85,25 @@ public class BufferStream {
   }
 
   private synchronized void pollSink() throws Exception {
-    if (canWrite && !sink.isEmpty()) underlySocketFunction.write(this, canMultipleSend ? sink.read(sink.getSize()) : sink.readNext());
+    if (!canWrite || sink.isEmpty()) return;
+
+    ByteBuffer next;
+    if (canMultipleSend) {
+      next = sink.read(Math.min(sink.getSize(), maxWriteSize));
+    } else {
+      next = sink.readNext();
+      if (next.remaining() > maxWriteSize) {
+        ByteBuffer chunk = next.slice();
+        chunk.limit(maxWriteSize);
+        next.position(next.position() + maxWriteSize);
+        sink.writeFirst(next);
+        next = chunk;
+      }
+    }
+
+    // ADB 每发出一个 WRTE，都必须等远端 OKAY 后才能发送下一帧。
+    if (requireWriteAck) canWrite = false;
+    underlySocketFunction.write(this, next);
   }
 
   public boolean isEmpty() {
