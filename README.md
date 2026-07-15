@@ -2,7 +2,7 @@
 
 [![GitHub license](https://img.shields.io/github/license/alanqjt/Easycontrol_For_Car.svg)](https://github.com/alanqjt/Easycontrol_For_Car/blob/main/LICENSE)
 [![GitHub release](https://img.shields.io/github/release/alanqjt/Easycontrol_For_Car.svg)](https://github.com/alanqjt/Easycontrol_For_Car/releases/)
-[![GitHub downloads](https://img.shields.io/github/downloads/alanqjt/Easycontrol_For_Car/total.svg)](https://github.com/alanqjt/Easycontrol_For_Car/releases/)
+
 
 > 本项目基于易控车机版 1.6.0 开发，主要针对车机 UI、多窗口投屏、音频分路和导航播报体验进行优化。
 
