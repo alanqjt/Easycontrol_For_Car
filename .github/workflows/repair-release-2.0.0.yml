@@ -1,0 +1,36 @@
+name: Repair 2.0.0 release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/repair-release-2.0.0.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upload APK and update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload 2.0.0 \
+            "更新包/2.0.0/EasyControl-Car-2.0.0-release.apk" \
+            --clobber
+          gh release edit 2.0.0 \
+            --notes-file "更新包/2.0.0/README.md"
+
+      - name: Verify release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view 2.0.0 --json assets --jq '.assets[] | select(.name == "EasyControl-Car-2.0.0-release.apk") | .name')" = \
+            "EasyControl-Car-2.0.0-release.apk"

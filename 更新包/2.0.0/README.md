@@ -4,7 +4,7 @@
 
 ## 安装包
 
-- 文件：[EasyControl-Car-2.0.0-release.apk](EasyControl-Car-2.0.0-release.apk)
+- 文件：[EasyControl-Car-2.0.0-release.apk](https://github.com/alanqjt/Easycontrol_For_Car/releases/download/2.0.0/EasyControl-Car-2.0.0-release.apk)
 - 应用包名：`top.eiyooooo.easycontrol.app.byd`
 - 版本：`2.0.0`
 - 版本代码：`200`
