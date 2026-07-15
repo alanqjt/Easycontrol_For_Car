@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="#15191E"
+  android:keepScreenOn="true">
+
+  <EditText
+    android:id="@+id/edit_text"
+    android:layout_width="1dp"
+    android:layout_height="1dp"
+    android:alpha="0"
+    android:inputType="textVisiblePassword" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <FrameLayout
+      android:id="@+id/texture_view_layout"
+      android:layout_width="match_parent"
+      android:layout_height="0dp"
+      android:layout_weight="1"
+      android:foregroundGravity="center" />
+
+    <LinearLayout
+      android:id="@+id/nav_bar"
+      android:layout_width="match_parent"
+      android:layout_height="42dp"
+      android:background="#D9181D22"
+      android:gravity="center"
+      android:orientation="horizontal"
+      android:paddingStart="18dp"
+      android:paddingEnd="18dp"
+      android:visibility="gone">
+
+      <ImageView
+        android:id="@+id/button_switch"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:contentDescription="@string/embedded_recent_apps"
+        android:padding="8dp"
+        android:src="@drawable/square"
+        android:tint="#F2F6FA" />
+
+      <ImageView
+        android:id="@+id/button_home"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:contentDescription="@string/embedded_home"
+        android:padding="8dp"
+        android:src="@drawable/o"
+        android:tint="#F2F6FA" />
+
+      <ImageView
+        android:id="@+id/button_back"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:contentDescription="@string/embedded_back"
+        android:padding="8dp"
+        android:src="@drawable/caret_left"
+        android:tint="#F2F6FA" />
+    </LinearLayout>
+  </LinearLayout>
+
+  <LinearLayout
+    android:id="@+id/loading_group"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_gravity="center"
+    android:background="@drawable/background_cron"
+    android:elevation="8dp"
+    android:gravity="center"
+    android:orientation="horizontal"
+    android:paddingStart="20dp"
+    android:paddingTop="14dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="14dp">
+
+    <ProgressBar
+      android:layout_width="28dp"
+      android:layout_height="28dp"
+      android:indeterminateTint="@color/button" />
+
+    <TextView
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="12dp"
+      android:text="@string/embedded_projection_connecting"
+      android:textColor="@color/onCardBackground"
+      android:textSize="@dimen/smallFont" />
+
+    <ImageView
+      android:id="@+id/button_loading_close"
+      android:layout_width="40dp"
+      android:layout_height="40dp"
+      android:layout_marginStart="10dp"
+      android:contentDescription="@string/embedded_close"
+      android:padding="9dp"
+      android:src="@drawable/x"
+      android:tint="@color/alert" />
+  </LinearLayout>
+
+  <ImageView
+    android:id="@+id/button_toolbar_toggle"
+    android:layout_width="46dp"
+    android:layout_height="46dp"
+    android:layout_gravity="top|start"
+    android:layout_margin="10dp"
+    android:background="@drawable/toolbar_icon_background"
+    android:contentDescription="@string/embedded_toolbar_hide"
+    android:elevation="9dp"
+    android:padding="11dp"
+    android:src="@drawable/ellipsis_vertical"
+    android:tint="@color/onCardBackground"
+    android:visibility="gone" />
+
+  <HorizontalScrollView
+    android:id="@+id/toolbar_container"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_gravity="top"
+    android:clipToPadding="false"
+    android:fillViewport="false"
+    android:overScrollMode="never"
+    android:paddingStart="64dp"
+    android:paddingTop="10dp"
+    android:paddingEnd="12dp"
+    android:scrollbars="none"
+    android:visibility="gone">
+
+    <LinearLayout
+      android:id="@+id/toolbar_actions"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:background="@drawable/background_cron"
+      android:elevation="8dp"
+      android:gravity="center"
+      android:orientation="horizontal"
+      android:padding="6dp">
+
+      <ImageView
+        android:id="@+id/button_nav_bar"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="@string/embedded_navigation_bar"
+        android:padding="9dp"
+        android:src="@drawable/not_equal"
+        android:tint="@color/onCardBackground" />
+
+      <ImageView
+        android:id="@+id/button_rotate"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="@string/embedded_rotate"
+        android:padding="9dp"
+        android:src="@drawable/rotate"
+        android:tint="@color/onCardBackground" />
+
+      <ImageView
+        android:id="@+id/button_transfer"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="@string/embedded_transfer"
+        android:padding="9dp"
+        android:src="@drawable/share_out"
+        android:tint="@color/onCardBackground" />
+
+      <ImageView
+        android:id="@+id/button_light_off"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="@string/embedded_screen_light"
+        android:padding="9dp"
+        android:src="@drawable/lightbulb_off"
+        android:tint="@color/onCardBackground" />
+
+      <ImageView
+        android:id="@+id/button_power"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="@string/embedded_power"
+        android:padding="9dp"
+        android:src="@drawable/power_off"
+        android:tint="@color/onCardBackground" />
+
+      <ImageView
+        android:id="@+id/button_close"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="@string/embedded_close"
+        android:padding="9dp"
+        android:src="@drawable/x"
+        android:tint="@color/alert" />
+    </LinearLayout>
+  </HorizontalScrollView>
+</FrameLayout>
