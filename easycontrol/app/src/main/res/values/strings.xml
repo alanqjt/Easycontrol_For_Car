@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="app_name">易控车机版</string>
+  <string name="app_name">易控-byd</string>
 
   <!-- 主页 -->
   <string name="main_poem">道路千万条，安全第一条</string>

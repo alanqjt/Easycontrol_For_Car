@@ -389,10 +389,11 @@ public class Adb {
       boolean canRetry = canRetryServerRequest(request);
       Log.w(TRANSPORT_LOG_TAG, "ADB helper request failed connection=" + uuid
               + ", request=" + request
-              + ", retryable=" + canRetry
-              + "; restarting control helper", firstFailure);
-      restartControlServer(request, firstFailure);
+              + ", retryable=" + canRetry, firstFailure);
+      // 创建/释放虚拟屏等写请求可能已经在远端执行，不能重启后再次发送。
       if (!canRetry) throw firstFailure;
+
+      restartControlServer(request, firstFailure);
 
       try {
         String response = new String(getResponse(request, args), StandardCharsets.UTF_8);
@@ -407,6 +408,7 @@ public class Adb {
   }
 
   private void restartControlServer(String request, Exception requestFailure) throws Exception {
+    Thread recoveryThread;
     synchronized (serverRequestLock) {
       if (closeStarted.get()) throw new InterruptedException("ADB connection is closed");
       BufferStream staleShell = serverShell;
@@ -415,16 +417,29 @@ public class Adb {
       serverStartFailure = null;
 
       L.log(uuid, "ADB helper restart after request failure, request=" + request);
-      startServer();
-      if (serverStartFailure != null) {
-        serverStartFailure.addSuppressed(requestFailure);
-        throw serverStartFailure;
+      synchronized (this) {
+        recoveryThread = new Thread(this::startServer, "easycontrol-adb-helper-recovery");
+        startServerThread = recoveryThread;
+        recoveryThread.start();
       }
-      if (serverShell == null || serverShell.isClosed()) {
-        IOException restartFailure = new IOException("ADB helper restart did not produce a live shell");
-        restartFailure.addSuppressed(requestFailure);
-        throw restartFailure;
-      }
+    }
+
+    recoveryThread.join(SERVER_BOOTSTRAP_TIMEOUT_MS);
+    if (recoveryThread.isAlive()) {
+      recoveryThread.interrupt();
+      IOException timeout = new IOException("Timed out restarting ADB helper after "
+              + SERVER_BOOTSTRAP_TIMEOUT_MS + " ms");
+      timeout.addSuppressed(requestFailure);
+      throw timeout;
+    }
+    if (serverStartFailure != null) {
+      serverStartFailure.addSuppressed(requestFailure);
+      throw serverStartFailure;
+    }
+    if (serverShell == null || serverShell.isClosed()) {
+      IOException restartFailure = new IOException("ADB helper restart did not produce a live shell");
+      restartFailure.addSuppressed(requestFailure);
+      throw restartFailure;
     }
   }
 
