@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.EasyControl" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:buttonStyle">@style/Widget.EasyControl.Button</item>
+    </style>
+
+    <style name="Widget.EasyControl.Button" parent="@android:style/Widget.DeviceDefault.Button">
+        <item name="android:elevation">0dp</item>
+        <item name="android:translationZ">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+</resources>

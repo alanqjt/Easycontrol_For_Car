@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="wrap_content"
+  android:background="@drawable/background_cron"
+  android:orientation="vertical"
+  android:paddingStart="24dp"
+  android:paddingTop="22dp"
+  android:paddingEnd="24dp"
+  android:paddingBottom="24dp">
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fontFamily="sans-serif-medium"
+    android:includeFontPadding="false"
+    android:text="@string/music_navigation_title"
+    android:textColor="@color/onCardBackground"
+    android:textSize="@dimen/largeFont" />
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="6dp"
+    android:includeFontPadding="false"
+    android:text="@string/music_navigation_detail"
+    android:textColor="@color/onCardBackgroundSecond"
+    android:textSize="@dimen/smallFont" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="20dp"
+    android:background="@drawable/setting_group_background"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="16dp">
+
+    <LinearLayout
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:orientation="vertical">
+
+      <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-medium"
+        android:text="@string/music_navigation_navigation_app"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/smallFont" />
+
+      <TextView
+        android:id="@+id/navigation_app_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/middleFont" />
+
+      <TextView
+        android:id="@+id/navigation_app_package"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/onCardBackgroundSecond"
+        android:textSize="@dimen/smallSmallFont" />
+    </LinearLayout>
+
+    <Button
+      android:id="@+id/select_navigation_app"
+      android:layout_width="wrap_content"
+      android:layout_height="52dp"
+      android:layout_marginStart="16dp"
+      android:background="@drawable/button_secondary"
+      android:paddingStart="18dp"
+      android:paddingEnd="18dp"
+      android:text="@string/music_navigation_select"
+      android:textAllCaps="false"
+      android:textColor="@color/onButtonSecond" />
+  </LinearLayout>
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="12dp"
+    android:background="@drawable/setting_group_background"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="16dp">
+
+    <LinearLayout
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:orientation="vertical">
+
+      <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-medium"
+        android:text="@string/music_navigation_music_app"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/smallFont" />
+
+      <TextView
+        android:id="@+id/music_app_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/middleFont" />
+
+      <TextView
+        android:id="@+id/music_app_package"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/onCardBackgroundSecond"
+        android:textSize="@dimen/smallSmallFont" />
+    </LinearLayout>
+
+    <Button
+      android:id="@+id/select_music_app"
+      android:layout_width="wrap_content"
+      android:layout_height="52dp"
+      android:layout_marginStart="16dp"
+      android:background="@drawable/button_secondary"
+      android:paddingStart="18dp"
+      android:paddingEnd="18dp"
+      android:text="@string/music_navigation_select"
+      android:textAllCaps="false"
+      android:textColor="@color/onButtonSecond" />
+  </LinearLayout>
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="20dp"
+    android:orientation="horizontal">
+
+    <Button
+      android:id="@+id/button_cancel"
+      android:layout_width="0dp"
+      android:layout_height="56dp"
+      android:layout_weight="1"
+      android:background="@drawable/button_secondary"
+      android:text="@string/cancel"
+      android:textAllCaps="false"
+      android:textColor="@color/onButtonSecond" />
+
+    <Space
+      android:layout_width="12dp"
+      android:layout_height="1dp" />
+
+    <Button
+      android:id="@+id/button_start"
+      android:layout_width="0dp"
+      android:layout_height="56dp"
+      android:layout_weight="1"
+      android:background="@drawable/button_primary"
+      android:text="@string/music_navigation_start"
+      android:textAllCaps="false"
+      android:textColor="@color/onButton" />
+  </LinearLayout>
+</LinearLayout>

@@ -25,7 +25,7 @@ public final class EmbeddedView {
   private final ClientView clientView;
   private final ViewEmbeddedProjectionBinding binding;
   private boolean ready;
-  private boolean toolbarVisible = true;
+  private boolean toolbarVisible = false;
   private int lastHostWidth;
   private int lastHostHeight;
   private int lastHostMode = Integer.MIN_VALUE;
