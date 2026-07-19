@@ -18,13 +18,9 @@ public final class ControlPacket {
     public static void sendVideoEvent(long pts, ByteBuffer data) throws IOException, ErrnoException {
         // 视频包格式：长度 + 视频数据 + 时间戳。
         int size = data.remaining();
-        if (size < 0) return;
-        ByteBuffer byteBuffer = ByteBuffer.allocate(12 + size);
-        byteBuffer.putInt(size);
-        byteBuffer.put(data);
-        byteBuffer.putLong(pts);
-        byteBuffer.flip();
-        Scrcpy.writeVideo(byteBuffer);
+        if (size <= 0) return;
+        // 不再把整帧复制进新 ByteBuffer。1080p 高码率下，每帧复制会制造大量 GC 和 CPU 抖动。
+        Scrcpy.writeVideoFrame(size, data, pts);
     }
 
     public static void sendAudioEvent(int role, boolean tagged, ByteBuffer data) throws IOException, ErrnoException {

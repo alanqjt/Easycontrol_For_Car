@@ -20,6 +20,7 @@ public final class WindowManager {
     private static Method isDisplayRotationFrozenMethod = null;
     private static Method thawDisplayRotationMethod = null;
     private static Method setFixedToUserRotationMethod = null;
+    private static Method setIgnoreOrientationRequestMethod = null;
     private static int freezeDisplayRotationMethodVersion;
     private static int isDisplayRotationFrozenMethodVersion;
     private static int thawDisplayRotationMethodVersion;
@@ -214,7 +215,7 @@ public final class WindowManager {
     }
 
     /**
-     * 固定副屏只使用用户指定的旋转角度，忽略应用自身请求的横竖屏方向。
+     * 固定副屏使用用户指定的旋转角度，但不会阻止应用继续请求横竖屏方向。
      */
     public static boolean setFixedToUserRotation(int displayId, boolean fixed) {
         try {
@@ -227,6 +228,25 @@ public final class WindowManager {
             return true;
         } catch (Exception e) {
             L.e("Could not set fixed-to-user rotation for display " + displayId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 忽略应用对指定显示器发出的方向请求，避免竖屏应用在横屏副屏中进入兼容信箱模式。
+     */
+    public static boolean setIgnoreOrientationRequest(int displayId, boolean ignore) {
+        try {
+            if (setIgnoreOrientationRequestMethod == null) {
+                setIgnoreOrientationRequestMethod = manager.getClass().getMethod(
+                        "setIgnoreOrientationRequest", int.class, boolean.class);
+            }
+            setIgnoreOrientationRequestMethod.invoke(manager, displayId, ignore);
+            L.i("ignore orientation request changed, displayId=" + displayId
+                    + ", ignore=" + ignore);
+            return true;
+        } catch (Exception e) {
+            L.e("Could not set ignore-orientation-request for display " + displayId, e);
             return false;
         }
     }

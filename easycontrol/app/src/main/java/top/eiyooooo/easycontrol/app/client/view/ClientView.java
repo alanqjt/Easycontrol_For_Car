@@ -29,6 +29,10 @@ import top.eiyooooo.easycontrol.app.helper.PublicTools;
  */
 
 public class ClientView implements TextureView.SurfaceTextureListener {
+  public interface EmbeddedHostSizeListener {
+    void onHostSizeChanged(int width, int height);
+  }
+
   public final Device device;
   public final Device deviceOriginal;
   public int mode = 0;
@@ -45,9 +49,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   private final EmbeddedView embeddedView;
   private FullActivity fullView;
   private final boolean embeddedMode;
+  private final EmbeddedHostSizeListener embeddedHostSizeListener;
 
   private Pair<Integer, Integer> videoSize;
-  private Pair<Integer, Integer> maxSize;
+  private volatile Pair<Integer, Integer> maxSize;
   private Pair<Integer, Integer> surfaceSize;
   public boolean lastTouchIsInside = true;
   boolean lightState;
@@ -55,9 +60,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
 
   public ClientView(Device device, ControlPacket controlPacket, PublicTools.MyFunctionInt changeMode,
                     PublicTools.MyFunction onReady, PublicTools.MyFunction onClose,
-                    boolean embeddedMode) {
+                    boolean embeddedMode, EmbeddedHostSizeListener embeddedHostSizeListener) {
     lightState = !AppData.setting.getTurnOffScreenIfStart();
     this.embeddedMode = embeddedMode;
+    this.embeddedHostSizeListener = embeddedHostSizeListener;
     this.deviceOriginal = device;
     this.device = new Device(device.uuid, device.type);
     Device.copyDevice(device, this.device);
@@ -192,7 +198,13 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     return embeddedMode;
   }
 
+  public void notifyEmbeddedHostSizeChanged(int width, int height) {
+    if (!embeddedMode || embeddedHostSizeListener == null || width <= 0 || height <= 0) return;
+    embeddedHostSizeListener.onHostSizeChanged(width, height);
+  }
+
   private static final float aspectRatioThreshold = 0.15f;
+  private static final float embeddedFlowMinAspectRatio = 16f / 9f;
 
   public void updateMaxSize(Pair<Integer, Integer> maxSize) {
     if (maxSize == null || maxSize.first == 0 || maxSize.second == 0) return;
@@ -245,8 +257,10 @@ public class ClientView implements TextureView.SurfaceTextureListener {
     reCalculateTextureViewSize();
     float videoRatio = (float) videoSize.first / videoSize.second;
     float hostRatio = (float) maxSize.first / maxSize.second;
+    float expectedVideoRatio = mode == 1
+            ? Math.max(hostRatio, embeddedFlowMinAspectRatio) : hostRatio;
     boolean flowRatioMismatch = mode == 1
-            && Math.abs(videoRatio - hostRatio) >= aspectRatioThreshold;
+            && Math.abs(videoRatio - expectedVideoRatio) >= aspectRatioThreshold;
     String message = "embedded stream geometry"
             + ", uuid=" + device.uuid
             + ", mode=" + mode
@@ -255,6 +269,7 @@ public class ClientView implements TextureView.SurfaceTextureListener {
             + ", surface=" + surfaceSize.first + "x" + surfaceSize.second
             + ", videoRatio=" + videoRatio
             + ", hostRatio=" + hostRatio
+            + ", expectedVideoRatio=" + expectedVideoRatio
             + ", scale=fit-center"
             + ", flowRatioMismatch=" + flowRatioMismatch;
     if (flowRatioMismatch) {

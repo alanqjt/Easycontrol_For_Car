@@ -230,6 +230,21 @@ public final class Scrcpy {
         }
     }
 
+    public static void writeVideoFrame(int size, ByteBuffer data, long pts) throws IOException, ErrnoException {
+        ByteBuffer sizeBuffer = ByteBuffer.allocate(4);
+        sizeBuffer.putInt(size);
+        sizeBuffer.flip();
+        ByteBuffer ptsBuffer = ByteBuffer.allocate(8);
+        ptsBuffer.putLong(pts);
+        ptsBuffer.flip();
+        synchronized (videoWriteLock) {
+            // 三段在同一把锁内连续写入，协议顺序不变，同时避免复制整帧编码数据。
+            while (sizeBuffer.remaining() > 0) Os.write(videoFD, sizeBuffer);
+            while (data.remaining() > 0) Os.write(videoFD, data);
+            while (ptsBuffer.remaining() > 0) Os.write(videoFD, ptsBuffer);
+        }
+    }
+
     public static void errorClose(Exception e) {
         // 出错时统一走这里收尾。
         L.e("errorClose: ", e);

@@ -7,7 +7,6 @@ import android.app.Dialog;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
-import android.content.res.Configuration;
 import android.hardware.usb.UsbDevice;
 import android.os.Build;
 import android.view.LayoutInflater;
@@ -32,7 +31,7 @@ import top.eiyooooo.easycontrol.app.entity.AppData;
 import top.eiyooooo.easycontrol.app.entity.Device;
 
 /**
- * 设备卡片网格渲染器：竖屏两列，横屏四列。
+ * 设备卡片网格渲染器：按应用当前可用宽度自适应，兼容整屏和系统分屏。
  */
 public class DeviceListAdapter {
 
@@ -43,6 +42,9 @@ public class DeviceListAdapter {
   private final Context context;
   private final GridLayout devicesGrid;
   private Runnable renderListener;
+  private int renderedColumnCount;
+  private int renderedGridWidth;
+  private boolean widthRenderPosted;
 
   public ExecutorService checkConnectionExecutor;
   private final Object checkingConnection = new Object();
@@ -51,6 +53,20 @@ public class DeviceListAdapter {
   public DeviceListAdapter(Context c, GridLayout devicesGrid) {
     context = c;
     this.devicesGrid = devicesGrid;
+    devicesGrid.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                            oldLeft, oldTop, oldRight, oldBottom) -> {
+      int width = right - left;
+      if (width <= 0) return;
+      int nextColumnCount = getColumnCount(width);
+      boolean widthChanged = Math.abs(width - renderedGridWidth) > dp(8);
+      if (!widthChanged && nextColumnCount == renderedColumnCount) return;
+      if (widthRenderPosted) return;
+      widthRenderPosted = true;
+      devicesGrid.post(() -> {
+        widthRenderPosted = false;
+        render();
+      });
+    });
     queryDevices();
     render();
   }
@@ -62,8 +78,9 @@ public class DeviceListAdapter {
   public void render() {
     if (devicesGrid == null) return;
     int columnCount = getColumnCount();
-    devicesGrid.setColumnCount(columnCount);
+    // 旋转时旧卡片仍带有横屏列坐标，必须先移除再缩减列数。
     devicesGrid.removeAllViews();
+    devicesGrid.setColumnCount(columnCount);
     int deviceIndex = 0;
     for (Device device : devicesList) {
       if (device.connection == -1) checkConnection(device);
@@ -72,6 +89,8 @@ public class DeviceListAdapter {
       devicesGrid.addView(cardBinding.getRoot(), createCardLayoutParams(columnCount, deviceIndex));
       deviceIndex++;
     }
+    renderedColumnCount = columnCount;
+    renderedGridWidth = devicesGrid.getWidth();
     if (renderListener != null) renderListener.run();
   }
 
@@ -80,12 +99,17 @@ public class DeviceListAdapter {
   }
 
   private int getColumnCount() {
-    int widthPx = devicesGrid.getWidth() > 0 ? devicesGrid.getWidth() : context.getResources().getDisplayMetrics().widthPixels;
-    int heightPx = devicesGrid.getHeight() > 0 ? devicesGrid.getHeight() : context.getResources().getDisplayMetrics().heightPixels;
-    int orientation = context.getResources().getConfiguration().orientation;
-    if (orientation == Configuration.ORIENTATION_PORTRAIT) return 2;
-    if (orientation == Configuration.ORIENTATION_LANDSCAPE) return 4;
-    return widthPx > heightPx ? 4 : 2;
+    int widthPx = devicesGrid.getWidth() > 0
+            ? devicesGrid.getWidth() : context.getResources().getDisplayMetrics().widthPixels;
+    return getColumnCount(widthPx);
+  }
+
+  private int getColumnCount(int widthPx) {
+    float density = context.getResources().getDisplayMetrics().density;
+    float widthDp = density > 0f ? widthPx / density : widthPx;
+    if (widthDp >= 1100f) return 4;
+    if (widthDp >= 800f) return 3;
+    return 2;
   }
 
   private GridLayout.LayoutParams createCardLayoutParams(int columnCount, int deviceIndex) {

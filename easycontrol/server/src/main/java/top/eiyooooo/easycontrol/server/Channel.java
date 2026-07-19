@@ -322,7 +322,8 @@ public class Channel {
     public String openApp(String packageName, String activity, int displayId) {
         if (!hasRealContext) {
             String cmd;
-            if (displayId != 0) cmd = "am start --display " + displayId + " -n " + packageName + "/" + activity;
+            if (displayId != 0) cmd = "am start --display " + displayId
+                    + " --windowingMode 1 -n " + packageName + "/" + activity;
             else cmd = "am start -n " + packageName + "/" + activity;
             L.d("start activity cmd: " + cmd);
             try {
@@ -338,14 +339,10 @@ public class Channel {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             // no animation
             intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT | Intent.FLAG_ACTIVITY_NEW_TASK);
-            } else {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            }
             ActivityOptions options = null;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && displayId != 0) {
                 options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId);
+                setFullscreenLaunchMode(options, "open app");
             }
             ComponentName cName = new ComponentName(packageName, activity);
             intent.setComponent(cName);
@@ -354,6 +351,8 @@ public class Channel {
             } else {
                 context.startActivity(intent);
             }
+            L.i("open app requested, package=" + packageName + ", activity=" + activity
+                    + ", displayId=" + displayId + ", fullscreen=" + (options != null));
         } catch (Exception e) {
             L.e("openApp", e);
         }
@@ -379,14 +378,7 @@ public class Channel {
             }
 
             ActivityOptions options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId);
-            try {
-                Method setLaunchWindowingMode = ActivityOptions.class
-                        .getDeclaredMethod("setLaunchWindowingMode", int.class);
-                setLaunchWindowingMode.setAccessible(true);
-                setLaunchWindowingMode.invoke(options, 1);
-            } catch (Exception e) {
-                L.w("set fullscreen windowing mode before task transfer failed", unwrapReflectionError(e));
-            }
+            setFullscreenLaunchMode(options, "move task");
 
             Method startFromRecents = activityTaskManager.getClass()
                     .getMethod("startActivityFromRecents", int.class, Bundle.class);
@@ -410,26 +402,50 @@ public class Channel {
         String refreshStrategy = "none";
         if (recreateActivity && packageName != null && !packageName.isEmpty()) {
             try {
-                Thread.sleep(250);
+                Thread.sleep(150);
+                forceTaskRelayout(taskId);
+                refreshStrategy = "fullscreenRelayout";
+            } catch (Exception relayoutError) {
+                L.w("task relayout after display move failed",
+                        unwrapReflectionError(relayoutError));
+                refreshStrategy = "relayoutUnsupported";
+            }
+            try {
+                Thread.sleep(150);
                 restartTaskTopActivityProcessIfVisible(taskId);
-                refreshStrategy = "restartTaskTopActivityProcessIfVisible";
+                refreshStrategy += "+restartTopActivity";
             } catch (Exception restartError) {
-                L.w("restart moved task unavailable, fallback to task relayout",
+                L.w("restart moved task unavailable",
                         unwrapReflectionError(restartError));
-                try {
-                    forceTaskRelayout(taskId);
-                    refreshStrategy = "resizeTask";
-                } catch (Exception relayoutError) {
-                    L.w("task relayout after display move failed",
-                            unwrapReflectionError(relayoutError));
-                    refreshStrategy = "unsupported";
-                }
+                refreshStrategy += "+restartUnsupported";
+            }
+            try {
+                Thread.sleep(200);
+                forceTaskRelayout(taskId);
+                refreshStrategy += "+finalRelayout";
+            } catch (Exception relayoutError) {
+                L.w("final task relayout after activity recreation failed",
+                        unwrapReflectionError(relayoutError));
+                refreshStrategy += "+finalRelayoutUnsupported";
             }
         }
         L.i("move task finished, taskId=" + taskId + ", displayId=" + displayId
                 + ", package=" + packageName + ", strategy=" + strategy
                 + ", refresh=" + refreshStrategy);
         return strategy + ",refresh=" + refreshStrategy;
+    }
+
+    @SuppressLint("BlockedPrivateApi")
+    private static void setFullscreenLaunchMode(ActivityOptions options, String operation) {
+        try {
+            Method setLaunchWindowingMode = ActivityOptions.class
+                    .getDeclaredMethod("setLaunchWindowingMode", int.class);
+            setLaunchWindowingMode.setAccessible(true);
+            setLaunchWindowingMode.invoke(options, 1);
+        } catch (Exception e) {
+            L.w("set fullscreen windowing mode during " + operation + " failed",
+                    unwrapReflectionError(e));
+        }
     }
 
     @SuppressLint("BlockedPrivateApi")
@@ -476,6 +492,29 @@ public class Channel {
         if (result instanceof Boolean && !((Boolean) result)) {
             throw new IllegalStateException("resizeTask returned false");
         }
+    }
+
+    public int relayoutTasksOnDisplay(int displayId) throws Exception {
+        JSONObject tasks = getRecentTasksJson(50, 0, 0);
+        JSONArray data = tasks.getJSONArray("data");
+        int refreshed = 0;
+        for (int i = 0; i < data.length(); i++) {
+            JSONObject task = data.getJSONObject(i);
+            if (task.optInt("displayId", -1) != displayId) continue;
+            int taskId = task.optInt("taskId", task.optInt("id", -1));
+            if (taskId < 0) continue;
+            try {
+                forceTaskRelayout(taskId);
+                refreshed++;
+                L.i("task relayout after display resize, taskId=" + taskId
+                        + ", displayId=" + displayId
+                        + ", package=" + task.optString("topPackage", ""));
+            } catch (Exception e) {
+                L.w("task relayout after display resize failed, taskId=" + taskId
+                        + ", displayId=" + displayId, unwrapReflectionError(e));
+            }
+        }
+        return refreshed;
     }
 
     private static Throwable unwrapReflectionError(Exception error) {

@@ -1,14 +1,17 @@
 package top.eiyooooo.easycontrol.app.client;
 
+import android.content.Context;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceInfo;
+import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
-import android.media.audiofx.LoudnessEnhancer;
 import android.os.Build;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -16,6 +19,8 @@ import top.eiyooooo.easycontrol.app.entity.AppData;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Locale;
 import java.util.concurrent.LinkedBlockingQueue;
 /**
  * 音频解码与播放链路。
@@ -28,10 +33,48 @@ public class AudioDecode {
   public static final int ROLE_MEDIA = 0;
   public static final int ROLE_NAVIGATION = 1;
   private static final int AUDIO_LOG_INTERVAL_FRAMES = 100;
+  private static final long AUDIO_STATS_INTERVAL_MS = 2000;
+  private static final long AUDIO_GAP_WARNING_MS = 80;
+  private static final long AUDIO_WRITE_WARNING_MS = 40;
+  private static final long AUDIO_WARNING_RATE_LIMIT_MS = 1000;
+  private static final int PCM_CLIP_THRESHOLD = 32760;
+  private static final int NAVIGATION_PCM_ACTIVITY_THRESHOLD = 256;
+  private static final long NAVIGATION_FOCUS_RELEASE_DELAY_MS = 1200;
   private final Object codecLock = new Object();
+  private final Object statsLock = new Object();
+  private final Object navigationFocusLock = new Object();
   private final int audioRole;
+  private final Handler audioHandler;
   private long inputFrameCount;
   private long outputFrameCount;
+  private long lastNavigationActivityMs;
+  private volatile boolean navigationFocusHeld;
+  private boolean navigationFocusReleaseScheduled;
+  private long statsWindowStartedMs = SystemClock.elapsedRealtime();
+  private long lastCompressedInputMs;
+  private long lastPcmOutputMs;
+  private long statsInputFrames;
+  private long statsInputBytes;
+  private long statsOutputFrames;
+  private long statsPcmBytes;
+  private long statsWrittenBytes;
+  private long statsPcmSamples;
+  private long statsPcmClippedSamples;
+  private long statsPcmSquareSum;
+  private long statsMaxInputGapMs;
+  private long statsMaxOutputGapMs;
+  private long statsMaxWriteMs;
+  private long statsSlowWrites;
+  private long statsIncompleteWrites;
+  private long statsDroppedCompressedFrames;
+  private int statsPcmPeak;
+  private int statsMaxInputQueueDepth;
+  private int lastUnderrunCount = -1;
+  private long lastInputGapWarningMs;
+  private long lastOutputGapWarningMs;
+  private long lastWriteWarningMs;
+  private AudioManager audioManager;
+  private AudioFocusRequest navigationFocusRequest;
   private volatile boolean released = false;
   // 媒体允许最多积压约 480ms；导航不丢包，避免播报开头或结尾缺字。
   private static final int MAX_PENDING_AUDIO_FRAMES = 24;
@@ -41,10 +84,18 @@ public class AudioDecode {
   public MediaCodec decodec;
   // 最终把 PCM 写入系统音频输出的播放器对象。
   public AudioTrack audioTrack;
-  // 轻量音量增强器，让车机里导航提示音更容易听清。
-  public LoudnessEnhancer loudnessEnhancer;
   // 当前这路音频是否允许真正播放；非 owner 暂停时仍可解码，但会丢弃 PCM，避免堵住 AudioTrack。
   private volatile boolean shouldPlay = false;
+  private final AudioManager.OnAudioFocusChangeListener navigationFocusChangeListener = focusChange -> {
+    synchronized (navigationFocusLock) {
+      if (focusChange == AudioManager.AUDIOFOCUS_LOSS
+              || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+        navigationFocusHeld = false;
+      }
+    }
+    Log.i(TAG, "navigation audio focus changed, change=" + focusChange);
+  };
+  private final Runnable navigationFocusReleaseCheck = this::checkNavigationFocusRelease;
   // 异步回调：解码器有输入/输出缓冲区时会通过它通知我们。
   private final MediaCodec.Callback callback = new MediaCodec.Callback() {
     @Override
@@ -78,26 +129,41 @@ public class AudioDecode {
             pcm.position(dataStart);
             pcm.limit((int) dataEndLong);
             outputFrameCount++;
+            boolean audibleNavigation = recordDecodedPcm(pcm);
+            int requestedBytes = pcm.remaining();
+            int lastWriteResult = 0;
+            long writeDurationMs = 0;
             // 只有当前连接是音频 owner 时才写入 AudioTrack，非 owner 仍持续解码避免阻塞。
             if (shouldPlay) {
+              if (audioRole == ROLE_NAVIGATION && audibleNavigation) {
+                noteNavigationAudioActivity();
+              }
               // 导航必须完整写入，避免缓冲区暂满时丢掉播报结尾；媒体保持低延迟非阻塞写入。
               safeStartAudioTrack();
               int writeMode = audioRole == ROLE_NAVIGATION ? AudioTrack.WRITE_BLOCKING : AudioTrack.WRITE_NON_BLOCKING;
+              long writeStartedNs = SystemClock.elapsedRealtimeNanos();
               while (pcm.hasRemaining()) {
                 int writeSize = audioTrack.write(pcm, pcm.remaining(), writeMode);
+                lastWriteResult = writeSize;
                 if (writeSize <= 0) break;
                 writtenBytes += writeSize;
               }
+              writeDurationMs = nanosToRoundedUpMillis(SystemClock.elapsedRealtimeNanos() - writeStartedNs);
+              recordAudioTrackWrite(requestedBytes, writtenBytes, lastWriteResult, writeDurationMs);
             }
             if (shouldLogFrame(outputFrameCount)) {
               Log.i(TAG, "decoded role=" + roleName(audioRole)
                       + ", frame=" + outputFrameCount
                       + ", pcmBytes=" + bufferInfo.size
                       + ", writtenBytes=" + writtenBytes
+                      + ", writeMs=" + writeDurationMs
+                      + ", dataQueue=" + intputDataQueue.size()
+                      + ", codecInputQueue=" + intputBufferQueue.size()
                       + ", shouldPlay=" + shouldPlay
                       + ", trackState=" + audioTrack.getState()
                       + ", playState=" + audioTrack.getPlayState());
             }
+            maybeLogPlaybackStats(false, "periodic");
           }
         } catch (RuntimeException e) {
           Log.e(TAG, "audio output failed role=" + roleName(audioRole), e);
@@ -131,23 +197,15 @@ public class AudioDecode {
 
   public AudioDecode(boolean useOpus, byte[] csd0, Handler handler, int audioRole) throws IOException {
     this.audioRole = audioRole == ROLE_NAVIGATION ? ROLE_NAVIGATION : ROLE_MEDIA;
+    this.audioHandler = handler != null ? handler : AppData.uiHandler;
     // 先创建解码器，把压缩音频流转成 PCM。
     setAudioDecodec(useOpus, csd0, handler);
     // 再创建 AudioTrack，让 PCM 可以尽快进入系统播放链路。
     setAudioTrack();
-    // 最后创建音量增强器，避免车机环境下导航播报过小。
-    if (this.audioRole == ROLE_NAVIGATION) {
-      try {
-        setLoudnessEnhancer();
-      } catch (RuntimeException ignored) {
-        // Some vehicle systems do not provide the LoudnessEnhancer effect.
-        // Audio playback must continue without it instead of closing the client.
-        loudnessEnhancer = null;
-      }
-    }
   }
 
   public void release() {
+    maybeLogPlaybackStats(true, "release");
     synchronized (codecLock) {
       if (released) return;
       released = true;
@@ -155,16 +213,13 @@ public class AudioDecode {
       intputDataQueue.clear();
       intputBufferQueue.clear();
     }
+    abandonNavigationAudioFocus("decoder-release");
     try {
       if (audioTrack != null && audioTrack.getState() == AudioTrack.STATE_INITIALIZED) audioTrack.stop();
     } catch (Exception ignored) {
     }
     try {
       if (audioTrack != null) audioTrack.release();
-    } catch (Exception ignored) {
-    }
-    try {
-      if (loudnessEnhancer != null) loudnessEnhancer.release();
     } catch (Exception ignored) {
     }
     try {
@@ -175,17 +230,26 @@ public class AudioDecode {
       if (decodec != null) decodec.release();
     } catch (Exception ignored) {
     }
+    Log.i(TAG, "decoder released role=" + roleName(audioRole));
   }
 
   public void playAudio(boolean play) {
     synchronized (codecLock) {
       if (released) return;
+      boolean previous = shouldPlay;
       shouldPlay = play;
+      if (previous != play) {
+        Log.i(TAG, "playback owner changed role=" + roleName(audioRole)
+                + ", shouldPlay=" + play
+                + ", dataQueue=" + intputDataQueue.size()
+                + ", codecInputQueue=" + intputBufferQueue.size());
+      }
       if (play) {
         // 导航轨提前进入 PLAYING 并在两次播报之间保持常驻，首帧到达时无需重新启动音频路由。
         if (audioRole == ROLE_NAVIGATION) safeStartAudioTrack();
         return;
       }
+      abandonNavigationAudioFocus("playback-disabled");
       if (audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
       try {
         if (audioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) audioTrack.pause();
@@ -200,9 +264,16 @@ public class AudioDecode {
     synchronized (codecLock) {
       if (released || !shouldPlay || audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
       try {
-        if (audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) audioTrack.play();
-      } catch (IllegalStateException ignored) {
-        // AudioTrack may be invalidated asynchronously by a vehicle audio policy change.
+        if (audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
+          audioTrack.play();
+          Log.i(TAG, "AudioTrack started role=" + roleName(audioRole)
+                  + ", sessionId=" + audioTrack.getAudioSessionId()
+                  + ", route=" + getAudioRouteSummary());
+        }
+      } catch (IllegalStateException e) {
+        Log.w(TAG, "AudioTrack start failed role=" + roleName(audioRole)
+                + ", state=" + audioTrack.getState()
+                + ", playState=" + audioTrack.getPlayState(), e);
       }
     }
   }
@@ -214,20 +285,28 @@ public class AudioDecode {
 
   public void decodeIn(byte[] data) {
     if (released || data == null || data.length == 0) return;
+    int droppedFrames = 0;
     if (audioRole != ROLE_NAVIGATION) {
       while (intputDataQueue.size() >= MAX_PENDING_AUDIO_FRAMES) {
         intputDataQueue.poll();
+        droppedFrames++;
       }
     }
     inputFrameCount++;
+    // 收到一帧压缩音频后先入队，等有空闲输入缓冲区时再配对。
+    intputDataQueue.offer(data);
+    long inputGapMs = recordCompressedInput(data.length, intputDataQueue.size(), droppedFrames);
     if (shouldLogFrame(inputFrameCount)) {
       Log.i(TAG, "compressed input role=" + roleName(audioRole)
               + ", frame=" + inputFrameCount
               + ", bytes=" + data.length
+              + ", gapMs=" + inputGapMs
+              + ", dataQueue=" + intputDataQueue.size()
+              + ", codecInputQueue=" + intputBufferQueue.size()
+              + ", dropped=" + droppedFrames
               + ", head=" + hexPrefix(data, 12));
     }
-    // 收到一帧压缩音频后先入队，等有空闲输入缓冲区时再配对。
-    intputDataQueue.offer(data);
+    maybeLogPlaybackStats(false, "periodic");
     // 立即尝试喂给解码器，减少等待和排队延迟。
     checkDecode();
   }
@@ -350,7 +429,242 @@ public class AudioDecode {
     Log.i(TAG, "AudioTrack ready role=" + roleName(audioRole)
             + ", state=" + audioTrack.getState()
             + ", sessionId=" + audioTrack.getAudioSessionId()
-            + ", bufferBytes=" + bufferSize);
+            + ", minBufferBytes=" + minBufferSize
+            + ", bufferBytes=" + bufferSize
+            + ", bufferFrames=" + getAudioTrackBufferFrames()
+            + ", usage=" + audioTrack.getAudioAttributes().getUsage()
+            + ", contentType=" + audioTrack.getAudioAttributes().getContentType()
+            + ", loudnessEnhancer=disabled-to-avoid-clipping");
+  }
+
+  private long recordCompressedInput(int bytes, int queueDepth, int droppedFrames) {
+    long nowMs = SystemClock.elapsedRealtime();
+    long gapMs;
+    boolean warn;
+    synchronized (statsLock) {
+      gapMs = lastCompressedInputMs == 0 ? 0 : nowMs - lastCompressedInputMs;
+      lastCompressedInputMs = nowMs;
+      statsInputFrames++;
+      statsInputBytes += bytes;
+      statsDroppedCompressedFrames += droppedFrames;
+      statsMaxInputGapMs = Math.max(statsMaxInputGapMs, gapMs);
+      statsMaxInputQueueDepth = Math.max(statsMaxInputQueueDepth, queueDepth);
+      warn = gapMs >= AUDIO_GAP_WARNING_MS
+              && nowMs - lastInputGapWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+      if (warn) lastInputGapWarningMs = nowMs;
+    }
+    if (warn) {
+      Log.w(TAG, "compressed input gap role=" + roleName(audioRole)
+              + ", gapMs=" + gapMs
+              + ", bytes=" + bytes
+              + ", dataQueue=" + queueDepth
+              + ", codecInputQueue=" + intputBufferQueue.size());
+    }
+    return gapMs;
+  }
+
+  private boolean recordDecodedPcm(ByteBuffer pcm) {
+    long nowMs = SystemClock.elapsedRealtime();
+    long gapMs;
+    boolean warn;
+    boolean audibleNavigation = false;
+    ByteBuffer samples = pcm.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+    synchronized (statsLock) {
+      gapMs = lastPcmOutputMs == 0 ? 0 : nowMs - lastPcmOutputMs;
+      lastPcmOutputMs = nowMs;
+      statsOutputFrames++;
+      statsPcmBytes += pcm.remaining();
+      statsMaxOutputGapMs = Math.max(statsMaxOutputGapMs, gapMs);
+      while (samples.remaining() >= 2) {
+        int sample = samples.getShort();
+        int absolute = Math.abs(sample);
+        statsPcmPeak = Math.max(statsPcmPeak, absolute);
+        statsPcmSamples++;
+        statsPcmSquareSum += sample * (long) sample;
+        if (absolute >= PCM_CLIP_THRESHOLD) statsPcmClippedSamples++;
+        if (absolute >= NAVIGATION_PCM_ACTIVITY_THRESHOLD) audibleNavigation = true;
+      }
+      warn = gapMs >= AUDIO_GAP_WARNING_MS
+              && nowMs - lastOutputGapWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+      if (warn) lastOutputGapWarningMs = nowMs;
+    }
+    if (warn) {
+      Log.w(TAG, "decoder output gap role=" + roleName(audioRole)
+              + ", gapMs=" + gapMs
+              + ", pcmBytes=" + pcm.remaining()
+              + ", dataQueue=" + intputDataQueue.size()
+              + ", codecInputQueue=" + intputBufferQueue.size());
+    }
+    return audibleNavigation;
+  }
+
+  private void recordAudioTrackWrite(int requestedBytes, int writtenBytes, int lastWriteResult, long writeMs) {
+    long nowMs = SystemClock.elapsedRealtime();
+    boolean incomplete = writtenBytes < requestedBytes || lastWriteResult < 0;
+    boolean warn;
+    synchronized (statsLock) {
+      statsWrittenBytes += writtenBytes;
+      statsMaxWriteMs = Math.max(statsMaxWriteMs, writeMs);
+      if (writeMs >= AUDIO_WRITE_WARNING_MS) statsSlowWrites++;
+      if (incomplete) statsIncompleteWrites++;
+      warn = audioRole == ROLE_NAVIGATION
+              && (writeMs >= AUDIO_WRITE_WARNING_MS || incomplete)
+              && nowMs - lastWriteWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+      if (warn) lastWriteWarningMs = nowMs;
+    }
+    if (warn) {
+      Log.w(TAG, "AudioTrack write delayed role=" + roleName(audioRole)
+              + ", requestedBytes=" + requestedBytes
+              + ", writtenBytes=" + writtenBytes
+              + ", lastResult=" + lastWriteResult
+              + ", writeMs=" + writeMs
+              + ", underruns=" + getAudioTrackUnderrunCount()
+              + ", playbackHead=" + getAudioTrackPlaybackHead()
+              + ", route=" + getAudioRouteSummary());
+    }
+  }
+
+  private void maybeLogPlaybackStats(boolean force, String reason) {
+    String message;
+    synchronized (statsLock) {
+      long nowMs = SystemClock.elapsedRealtime();
+      long windowMs = Math.max(1, nowMs - statsWindowStartedMs);
+      if (!force && windowMs < AUDIO_STATS_INTERVAL_MS) return;
+
+      double inputKbps = statsInputBytes * 8.0 / windowMs;
+      double clipPercent = statsPcmSamples == 0
+              ? 0.0 : statsPcmClippedSamples * 100.0 / statsPcmSamples;
+      double rms = statsPcmSamples == 0
+              ? 0.0 : Math.sqrt(statsPcmSquareSum / (double) statsPcmSamples);
+      double rmsDbfs = rms <= 0.0 ? -120.0 : 20.0 * Math.log10(rms / 32768.0);
+      int underruns = getAudioTrackUnderrunCount();
+      int underrunDelta = underruns < 0 || lastUnderrunCount < 0
+              ? 0 : Math.max(0, underruns - lastUnderrunCount);
+      if (underruns >= 0) lastUnderrunCount = underruns;
+
+      message = String.format(Locale.US,
+              "audio playback stats role=%s, reason=%s, windowMs=%d"
+                      + ", compressedFrames=%d, compressedKbps=%.1f, inputGapMaxMs=%d"
+                      + ", dataQueueNow=%d, dataQueueMax=%d, codecInputQueue=%d, dropped=%d"
+                      + ", pcmFrames=%d, pcmKB=%d, outputGapMaxMs=%d"
+                      + ", peak=%d, rmsDbfs=%.1f, clipped=%d/%d(%.3f%%)"
+                      + ", writtenKB=%d, writeMaxMs=%d, slowWrites=%d, incompleteWrites=%d"
+                      + ", underruns=%d(delta=%d), bufferFrames=%d, playbackHead=%d"
+                      + ", shouldPlay=%s, focusHeld=%s, route=%s",
+              roleName(audioRole), reason, windowMs,
+              statsInputFrames, inputKbps, statsMaxInputGapMs,
+              intputDataQueue.size(), statsMaxInputQueueDepth, intputBufferQueue.size(),
+              statsDroppedCompressedFrames,
+              statsOutputFrames, statsPcmBytes / 1024, statsMaxOutputGapMs,
+              statsPcmPeak, rmsDbfs, statsPcmClippedSamples, statsPcmSamples, clipPercent,
+              statsWrittenBytes / 1024, statsMaxWriteMs, statsSlowWrites, statsIncompleteWrites,
+              underruns, underrunDelta, getAudioTrackBufferFrames(), getAudioTrackPlaybackHead(),
+              shouldPlay, navigationFocusHeld, getAudioRouteSummary());
+
+      statsWindowStartedMs = nowMs;
+      statsInputFrames = 0;
+      statsInputBytes = 0;
+      statsOutputFrames = 0;
+      statsPcmBytes = 0;
+      statsWrittenBytes = 0;
+      statsPcmSamples = 0;
+      statsPcmClippedSamples = 0;
+      statsPcmSquareSum = 0;
+      statsMaxInputGapMs = 0;
+      statsMaxOutputGapMs = 0;
+      statsMaxWriteMs = 0;
+      statsSlowWrites = 0;
+      statsIncompleteWrites = 0;
+      statsDroppedCompressedFrames = 0;
+      statsPcmPeak = 0;
+      statsMaxInputQueueDepth = intputDataQueue.size();
+    }
+    Log.i(TAG, message);
+  }
+
+  private void noteNavigationAudioActivity() {
+    if (audioRole != ROLE_NAVIGATION || released || !shouldPlay) return;
+    synchronized (navigationFocusLock) {
+      lastNavigationActivityMs = SystemClock.elapsedRealtime();
+      if (!navigationFocusHeld) requestNavigationAudioFocusLocked();
+      if (!navigationFocusReleaseScheduled) {
+        navigationFocusReleaseScheduled = true;
+        audioHandler.postDelayed(navigationFocusReleaseCheck, NAVIGATION_FOCUS_RELEASE_DELAY_MS);
+      }
+    }
+  }
+
+  private void requestNavigationAudioFocusLocked() {
+    if (audioManager == null) {
+      audioManager = (AudioManager) AppData.main.getSystemService(Context.AUDIO_SERVICE);
+    }
+    if (audioManager == null) {
+      Log.w(TAG, "navigation audio focus unavailable: AudioManager missing");
+      return;
+    }
+
+    int result;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      if (navigationFocusRequest == null) {
+        AudioAttributes attributes = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build();
+        navigationFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(attributes)
+                .setOnAudioFocusChangeListener(navigationFocusChangeListener, audioHandler)
+                .setWillPauseWhenDucked(false)
+                .build();
+      }
+      result = audioManager.requestAudioFocus(navigationFocusRequest);
+    } else {
+      result = audioManager.requestAudioFocus(
+              navigationFocusChangeListener,
+              AudioManager.STREAM_MUSIC,
+              AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+    }
+    navigationFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+    Log.i(TAG, "navigation audio focus requested"
+            + ", gain=GAIN_TRANSIENT_MAY_DUCK"
+            + ", result=" + result
+            + ", granted=" + navigationFocusHeld);
+  }
+
+  private void checkNavigationFocusRelease() {
+    synchronized (navigationFocusLock) {
+      long idleMs = SystemClock.elapsedRealtime() - lastNavigationActivityMs;
+      if (!released && shouldPlay && idleMs < NAVIGATION_FOCUS_RELEASE_DELAY_MS) {
+        audioHandler.postDelayed(
+                navigationFocusReleaseCheck,
+                NAVIGATION_FOCUS_RELEASE_DELAY_MS - idleMs);
+        return;
+      }
+      navigationFocusReleaseScheduled = false;
+      abandonNavigationAudioFocusLocked("navigation-idle-" + idleMs + "ms");
+    }
+  }
+
+  private void abandonNavigationAudioFocus(String reason) {
+    if (audioRole != ROLE_NAVIGATION) return;
+    synchronized (navigationFocusLock) {
+      navigationFocusReleaseScheduled = false;
+      audioHandler.removeCallbacks(navigationFocusReleaseCheck);
+      abandonNavigationAudioFocusLocked(reason);
+    }
+  }
+
+  private void abandonNavigationAudioFocusLocked(String reason) {
+    if (!navigationFocusHeld || audioManager == null) return;
+    int result;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && navigationFocusRequest != null) {
+      result = audioManager.abandonAudioFocusRequest(navigationFocusRequest);
+    } else {
+      result = audioManager.abandonAudioFocus(navigationFocusChangeListener);
+    }
+    navigationFocusHeld = false;
+    Log.i(TAG, "navigation audio focus abandoned"
+            + ", reason=" + reason
+            + ", result=" + result);
   }
 
   private static boolean shouldLogFrame(long frame) {
@@ -390,18 +704,51 @@ public class AudioDecode {
     return result.toString();
   }
 
+  private int getAudioTrackUnderrunCount() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || audioTrack == null) return -1;
+    try {
+      return audioTrack.getUnderrunCount();
+    } catch (RuntimeException ignored) {
+      return -1;
+    }
+  }
+
+  private int getAudioTrackBufferFrames() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || audioTrack == null) return -1;
+    try {
+      return audioTrack.getBufferSizeInFrames();
+    } catch (RuntimeException ignored) {
+      return -1;
+    }
+  }
+
+  private long getAudioTrackPlaybackHead() {
+    if (audioTrack == null) return -1;
+    try {
+      return audioTrack.getPlaybackHeadPosition() & 0xffffffffL;
+    } catch (RuntimeException ignored) {
+      return -1;
+    }
+  }
+
+  private String getAudioRouteSummary() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || audioTrack == null) return "unavailable";
+    try {
+      AudioDeviceInfo route = audioTrack.getRoutedDevice();
+      if (route == null) return "none";
+      return route.getType() + ":" + route.getProductName();
+    } catch (RuntimeException ignored) {
+      return "unavailable";
+    }
+  }
+
+  private static long nanosToRoundedUpMillis(long nanos) {
+    return nanos <= 0 ? 0 : (nanos + 999_999L) / 1_000_000L;
+  }
+
   private int getFallbackAudioTrackBufferSize(int sampleRate) {
     // 兜底 200ms PCM：48kHz * 2 声道 * 16bit * 0.2s，避免 getMinBufferSize 异常时创建失败。
     return sampleRate * 2 * 2 / 5;
   }
 
-  // 创建音量增强器。
-  private void setLoudnessEnhancer() {
-    // 基于 AudioTrack 的 sessionId 创建增强器，只作用于当前这路音频。
-    loudnessEnhancer = new LoudnessEnhancer(audioTrack.getAudioSessionId());
-    // 设置一个偏温和的增益，帮助车机里导航提示音更容易听清。
-    loudnessEnhancer.setTargetGain(2000);
-    // 立即启用增强器，让后续播放直接生效。
-    loudnessEnhancer.setEnabled(true);
-  }
 }

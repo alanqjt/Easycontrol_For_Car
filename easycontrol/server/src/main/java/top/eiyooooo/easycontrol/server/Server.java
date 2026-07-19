@@ -219,10 +219,13 @@ public class Server {
                     VirtualDisplay display = channel.createVirtualDisplay(width, height, density);
                     if (display == null) throw new Exception("Failed to create virtual display");
                     int createdDisplayId = display.getDisplay().getDisplayId();
-                    // 先把自然方向锁定为 rotation=0，再禁止应用请求改写副屏方向。
+                    // 先把自然方向锁定为 rotation=0；内嵌宽屏再忽略应用强制竖屏请求。
                     WindowManager.freezeRotation(createdDisplayId, 0);
                     boolean fixedToUserRotation = WindowManager.setFixedToUserRotation(
                             createdDisplayId, true);
+                    boolean embeddedWide = "embedded-wide".equals(profile);
+                    boolean ignoreOrientationRequest = embeddedWide
+                            && WindowManager.setIgnoreOrientationRequest(createdDisplayId, true);
                     // 缓存下来，后续可以重设尺寸或释放。
                     cache.put(createdDisplayId, display);
                     DisplayInfo createdDisplay = DisplayManager.getDisplayInfo(createdDisplayId);
@@ -236,13 +239,16 @@ public class Server {
                             : createdDisplay.size.first + "x" + createdDisplay.size.second
                             + "@" + createdDisplay.density + "dpi")
                             + ", actualRotation=" + (createdDisplay == null ? "unknown" : createdDisplay.rotation)
-                            + ", fixedToUserRotation=" + fixedToUserRotation);
+                            + ", fixedToUserRotation=" + fixedToUserRotation
+                            + ", ignoreOrientationRequest=" + ignoreOrientationRequest);
                     int[] displayIds = DisplayManager.getDisplayIds();
                     for (int displayId : displayIds) {
                         L.d(">>>display -> " + displayId);
                     }
                     postResponse("success create display, fixedToUserRotation="
-                            + fixedToUserRotation + ", id -> " + createdDisplayId);
+                            + fixedToUserRotation
+                            + ", ignoreOrientationRequest=" + ignoreOrientationRequest
+                            + ", id -> " + createdDisplayId);
                     break;
                 }
                 case "/resizeDisplay": {
@@ -278,14 +284,22 @@ public class Server {
                         // id 为 0 时表示改的是系统主屏参数。
                         if (line2 != null) Channel.execReadOutput("wm size " + width + "x" + height);
                         if (line4 != null) Channel.execReadOutput("wm density " + density);
+                        postResponse("success resize display, id -> " + id);
                     } else {
                         // 非 0 时说明是本类创建的虚拟显示器。
                         VirtualDisplay virtualDisplay = cache.get(id);
                         if (virtualDisplay == null)
                             throw new Exception("specified virtual display not found, it might not be created by this server");
                         virtualDisplay.resize(width, height, density);
+                        DisplayInfo resizedDisplay = waitForDisplayConfiguration(
+                                id, width, height, density, 1200);
+                        int refreshedTasks = channel.relayoutTasksOnDisplay(id);
+                        postResponse("success resize display, id -> " + id
+                                + ", actual=" + (resizedDisplay == null ? "unknown"
+                                : resizedDisplay.size.first + "x" + resizedDisplay.size.second
+                                + "@" + resizedDisplay.density + "dpi")
+                                + ", refreshedTasks=" + refreshedTasks);
                     }
-                    postResponse("success resize display, id -> " + id);
                     break;
                 }
                 case "/releaseVirtualDisplay": {
@@ -392,5 +406,27 @@ public class Server {
             postResponse(e.getMessage());
             L.e("handleRequest error", e);
         }
+    }
+
+    private static DisplayInfo waitForDisplayConfiguration(
+            int displayId, int width, int height, int density, long timeoutMs)
+            throws InterruptedException {
+        long deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs;
+        DisplayInfo current;
+        do {
+            current = DisplayManager.getDisplayInfo(displayId);
+            if (current != null
+                    && current.size.first == width
+                    && current.size.second == height
+                    && current.density == density) return current;
+            Thread.sleep(50);
+        } while (android.os.SystemClock.elapsedRealtime() < deadline);
+        L.w("virtual display resize did not settle before timeout"
+                + ", displayId=" + displayId
+                + ", requested=" + width + "x" + height + "@" + density + "dpi"
+                + ", actual=" + (current == null ? "unknown"
+                : current.size.first + "x" + current.size.second
+                + "@" + current.density + "dpi"));
+        return current;
     }
 }

@@ -4,6 +4,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.usb.UsbDevice;
 import android.os.SystemClock;
+import android.util.Log;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -30,6 +31,8 @@ import top.eiyooooo.easycontrol.app.helper.PublicTools;
  */
 
 public class Adb {
+  private static final String TRANSPORT_LOG_TAG = "EasycontrolTransport";
+  private static final long TRANSPORT_STATS_INTERVAL_MS = 2_000;
   public static final ConcurrentHashMap<String, Adb> adbMap = new ConcurrentHashMap<>();
   private static final ConcurrentHashMap<String, Object> adbCreationLocks = new ConcurrentHashMap<>();
   private static final long RESPONSE_TIMEOUT_MS = 15_000;
@@ -42,6 +45,7 @@ public class Adb {
   private static final Pattern SHA_256_PATTERN = Pattern.compile("(?i)\\b([0-9a-f]{64})\\b");
 
   private final AdbChannel channel;
+  private final boolean tcpTransport;
   private final AtomicInteger localIdPool = new AtomicInteger(1);
   private int MAX_DATA = AdbProtocol.CONNECT_MAXDATA;
   private final ConcurrentHashMap<Integer, BufferStream> connectionStreams = new ConcurrentHashMap<>(10);
@@ -49,6 +53,13 @@ public class Adb {
   private final Buffer sendBuffer = new Buffer();
   private final Object serverRequestLock = new Object();
   private final AtomicBoolean closeStarted = new AtomicBoolean(false);
+
+  private long transportStatsStartedAtMs;
+  private long lastIncomingWriteAtMs;
+  private long incomingWritePackets;
+  private long incomingWriteBytes;
+  private long largestIncomingGapMs;
+  private int largestIncomingWriteBytes;
 
   private final Thread handleInThread = new Thread(this::handleIn);
   private final Thread handleOutThread = new Thread(this::handleOut);
@@ -63,6 +74,7 @@ public class Adb {
     this.uuid = uuid;
     Pair<String, Integer> addressPair = PublicTools.getIpAndPort(address);
     channel = new TcpChannel(addressPair.first, addressPair.second, false);
+    tcpTransport = true;
     initializeConnection(keyPair, true);
   }
 
@@ -70,12 +82,14 @@ public class Adb {
     this.uuid = null;
     Pair<String, Integer> addressPair = PublicTools.getIpAndPort(address);
     channel = new TcpChannel(addressPair.first, addressPair.second, true);
+    tcpTransport = true;
     initializeConnection(keyPair, false);
   }
 
   public Adb(String uuid, UsbDevice usbDevice, AdbKeyPair keyPair) throws Exception {
     this.uuid = uuid;
     channel = new UsbChannel(uuid, usbDevice);
+    tcpTransport = false;
     initializeConnection(keyPair, true);
   }
 
@@ -94,7 +108,13 @@ public class Adb {
   private void connect(AdbKeyPair keyPair) throws Exception {
     // 连接ADB并认证
     L.log(uuid, "ADB handshake begin");
-    channel.write(AdbProtocol.generateConnect());
+    int advertisedMaxData = tcpTransport
+            ? AdbProtocol.CONNECT_MAXDATA_TCP
+            : AdbProtocol.CONNECT_MAXDATA;
+    Log.i(TRANSPORT_LOG_TAG, "ADB handshake transport="
+            + (tcpTransport ? "WiFi" : "USB")
+            + ", advertisedMaxData=" + advertisedMaxData);
+    channel.write(AdbProtocol.generateConnect(advertisedMaxData));
     channel.flush();
     AdbProtocol.AdbMessage message = completeHandshake(keyPair);
     if (message.arg1 <= 128 || message.arg1 > AdbProtocol.MAX_ADB_PAYLOAD_LENGTH) {
@@ -103,12 +123,18 @@ public class Adb {
     }
     MAX_DATA = message.arg1;
     L.log(uuid, "ADB connected, negotiated maxData=" + MAX_DATA);
+    Log.i(TRANSPORT_LOG_TAG, "ADB connected transport="
+            + (tcpTransport ? "WiFi" : "USB")
+            + ", advertisedMaxData=" + advertisedMaxData
+            + ", remoteMaxData=" + MAX_DATA);
     if (uuid == null) {
       channel.close();
       return;
     }
     // 启动后台进程
     handleInThread.setPriority(Thread.MAX_PRIORITY);
+    handleOutThread.setPriority(Thread.MAX_PRIORITY);
+    transportStatsStartedAtMs = SystemClock.elapsedRealtime();
     handleInThread.start();
     handleOutThread.start();
   }
@@ -544,8 +570,10 @@ public class Adb {
             bufferStream.setCanWrite(true);
             break;
           case AdbProtocol.CMD_WRTE:
+            recordIncomingWrite(message.payloadLength);
             bufferStream.pushSource(message.payload);
-            sendBuffer.write(AdbProtocol.generateOkay(message.arg1, message.arg0));
+            // ADB 每个 WRTE 都要等待 OKAY。优先回执，避免大视频帧阻塞后续音频和视频包。
+            sendBuffer.writeFirst(AdbProtocol.generateOkay(message.arg1, message.arg0));
             break;
           case AdbProtocol.CMD_CLSE:
             bufferStream.close();
@@ -565,6 +593,32 @@ public class Adb {
       }
       close();
     }
+  }
+
+  private void recordIncomingWrite(int payloadLength) {
+    if (!tcpTransport) return;
+    long now = SystemClock.elapsedRealtime();
+    if (lastIncomingWriteAtMs > 0) {
+      largestIncomingGapMs = Math.max(largestIncomingGapMs, now - lastIncomingWriteAtMs);
+    }
+    lastIncomingWriteAtMs = now;
+    incomingWritePackets++;
+    incomingWriteBytes += payloadLength;
+    largestIncomingWriteBytes = Math.max(largestIncomingWriteBytes, payloadLength);
+
+    long elapsedMs = now - transportStatsStartedAtMs;
+    if (elapsedMs < TRANSPORT_STATS_INTERVAL_MS) return;
+    double megabitsPerSecond = incomingWriteBytes * 8d / elapsedMs / 1000d;
+    Log.i(TRANSPORT_LOG_TAG, "ADB WiFi receive packets=" + incomingWritePackets
+            + ", rateMbps=" + String.format(java.util.Locale.US, "%.2f", megabitsPerSecond)
+            + ", largestPacket=" + largestIncomingWriteBytes
+            + ", maxGapMs=" + largestIncomingGapMs
+            + ", pendingSendBytes=" + sendBuffer.getSize());
+    transportStatsStartedAtMs = now;
+    incomingWritePackets = 0;
+    incomingWriteBytes = 0;
+    largestIncomingGapMs = 0;
+    largestIncomingWriteBytes = 0;
   }
 
   private void handleOut() {

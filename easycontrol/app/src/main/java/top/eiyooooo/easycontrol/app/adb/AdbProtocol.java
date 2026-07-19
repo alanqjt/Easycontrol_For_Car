@@ -26,11 +26,19 @@ public class AdbProtocol {
 
   public static final int CONNECT_VERSION = 0x01000000;
   public static final int CONNECT_MAXDATA = 15 * 1024;
+  public static final int CONNECT_MAXDATA_TCP = 256 * 1024;
 
   public static final byte[] CONNECT_PAYLOAD = "host::\0".getBytes();
 
   public static ByteBuffer generateConnect() {
-    return generateMessage(CMD_CNXN, CONNECT_VERSION, CONNECT_MAXDATA, CONNECT_PAYLOAD);
+    return generateConnect(CONNECT_MAXDATA);
+  }
+
+  public static ByteBuffer generateConnect(int maxData) {
+    if (maxData <= 128 || maxData > MAX_ADB_PAYLOAD_LENGTH) {
+      throw new IllegalArgumentException("invalid ADB connect maxData: " + maxData);
+    }
+    return generateMessage(CMD_CNXN, CONNECT_VERSION, maxData, CONNECT_PAYLOAD);
   }
 
   public static ByteBuffer generateAuth(int type, byte[] data) {

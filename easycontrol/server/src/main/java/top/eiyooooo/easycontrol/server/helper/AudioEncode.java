@@ -4,6 +4,7 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.os.Build;
+import android.os.SystemClock;
 
 import top.eiyooooo.easycontrol.server.Scrcpy;
 import top.eiyooooo.easycontrol.server.entity.Device;
@@ -16,6 +17,7 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 服务端音频编码协调器。
@@ -27,6 +29,10 @@ public final class AudioEncode {
     private static final int AUDIO_PROTOCOL_TAGGED = 2;
     private static final int FRAME_SIZE = AudioCapture.millisToBytes(20);
     private static final int AUDIO_LOG_INTERVAL_FRAMES = 100;
+    private static final long AUDIO_GAP_WARNING_MS = 80;
+    private static final long AUDIO_SEND_WARNING_MS = 40;
+    private static final long AUDIO_WARNING_RATE_LIMIT_MS = 1000;
+    private static final int PCM_CLIP_THRESHOLD = 32760;
     private static final byte[] OPUS_HEADER_ID = {'A', 'O', 'P', 'U', 'S', 'H', 'D', 'R'};
     private static final List<AudioPipeline> pipelines = new ArrayList<>();
     private static boolean useOpus;
@@ -116,11 +122,35 @@ public final class AudioEncode {
         private final AudioCapture.Session capture;
         private final MediaCodec encoder;
         private final MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
+        private final Object sourceStatsLock = new Object();
+        private final Object transportStatsLock = new Object();
         private Thread inputThread;
         private Thread outputThread;
         private long inputPresentationTimeUs;
         private long inputFrameCount;
         private long outputFrameCount;
+        private long lastCaptureStartedNs;
+        private long lastEncodedOutputNs;
+        private long sourceWindowStartedMs = SystemClock.elapsedRealtime();
+        private long transportWindowStartedMs = SystemClock.elapsedRealtime();
+        private long sourceFrames;
+        private long sourceBytes;
+        private long sourceSamples;
+        private long sourceClippedSamples;
+        private long sourceSquareSum;
+        private long sourceMaxGapMs;
+        private long sourceMaxReadMs;
+        private long sourceShortReads;
+        private long sourceEmptyReads;
+        private int sourcePeak;
+        private long transportFrames;
+        private long transportBytes;
+        private long transportMaxOutputGapMs;
+        private long transportMaxSendMs;
+        private long transportSlowSends;
+        private long lastCaptureWarningMs;
+        private long lastOutputWarningMs;
+        private long lastSendWarningMs;
         private volatile boolean released;
 
         private AudioPipeline(int role, AudioCapture.Session capture) throws Exception {
@@ -182,17 +212,30 @@ public final class AudioEncode {
                     }
                     buffer.clear();
                     int requested = Math.min(buffer.remaining(), FRAME_SIZE);
+                    long readStartedNs = SystemClock.elapsedRealtimeNanos();
+                    long captureGapMs = lastCaptureStartedNs == 0
+                            ? 0 : nanosToRoundedUpMillis(readStartedNs - lastCaptureStartedNs);
+                    lastCaptureStartedNs = readStartedNs;
                     int read = capture.read(buffer, requested);
+                    long readMs = nanosToRoundedUpMillis(SystemClock.elapsedRealtimeNanos() - readStartedNs);
                     if (read <= 0) {
+                        recordCaptureReadFailure(read, requested, captureGapMs, readMs);
                         encoder.queueInputBuffer(inputIndex, 0, 0, inputPresentationTimeUs, 0);
                         continue;
                     }
                     inputFrameCount++;
-                    if (shouldLogFrame(inputFrameCount)) {
+                    int framePeak = recordCapturedPcm(buffer, read, requested, captureGapMs, readMs);
+                    if (inputFrameCount <= 3) {
                         L.i("audio capture role=" + roleName(role)
                                 + ", frame=" + inputFrameCount
                                 + ", bytes=" + read
-                                + ", pcmPeak=" + calculatePcmPeak(buffer, read));
+                                + ", requested=" + requested
+                                + ", gapMs=" + captureGapMs
+                                + ", readMs=" + readMs
+                                + ", pcmPeak=" + framePeak);
+                    }
+                    if (inputFrameCount % AUDIO_LOG_INTERVAL_FRAMES == 0) {
+                        logSourceStats("periodic");
                     }
                     encoder.queueInputBuffer(inputIndex, 0, read, inputPresentationTimeUs, 0);
                     inputPresentationTimeUs += bytesToMicros(read);
@@ -240,15 +283,27 @@ public final class AudioEncode {
                     }
 
                     outputFrameCount++;
-                    if (codecConfig || shouldLogFrame(outputFrameCount)) {
+                    long outputNowNs = SystemClock.elapsedRealtimeNanos();
+                    long outputGapMs = lastEncodedOutputNs == 0
+                            ? 0 : nanosToRoundedUpMillis(outputNowNs - lastEncodedOutputNs);
+                    lastEncodedOutputNs = outputNowNs;
+                    int sendBytes = data.remaining();
+                    if (codecConfig || outputFrameCount <= 3) {
                         L.i("audio encoded role=" + roleName(role)
                                 + ", frame=" + outputFrameCount
                                 + ", config=" + codecConfig
                                 + ", rawBytes=" + rawSize
-                                + ", sendBytes=" + data.remaining()
+                                + ", sendBytes=" + sendBytes
+                                + ", outputGapMs=" + outputGapMs
                                 + ", head=" + hexPrefix(data, 12));
                     }
+                    long sendStartedNs = SystemClock.elapsedRealtimeNanos();
                     ControlPacket.sendAudioEvent(role, taggedAudio, data);
+                    long sendMs = nanosToRoundedUpMillis(SystemClock.elapsedRealtimeNanos() - sendStartedNs);
+                    recordEncodedTransport(sendBytes, outputGapMs, sendMs);
+                    if (outputFrameCount % AUDIO_LOG_INTERVAL_FRAMES == 0) {
+                        logTransportStats("periodic");
+                    }
                 } catch (Exception e) {
                     if (!released) Scrcpy.errorClose(e);
                     return;
@@ -298,18 +353,154 @@ public final class AudioEncode {
             return source;
         }
 
-        private int calculatePcmPeak(ByteBuffer buffer, int size) {
-            int peak = 0;
+        private int recordCapturedPcm(ByteBuffer buffer, int size, int requested, long gapMs, long readMs) {
+            int framePeak = 0;
+            long frameSamples = 0;
+            long frameClippedSamples = 0;
+            long frameSquareSum = 0;
             int sampleBytes = size - (size & 1);
             for (int i = 0; i < sampleBytes; i += 2) {
-                int sample = (buffer.get(i) & 0xff) | (buffer.get(i + 1) << 8);
-                peak = Math.max(peak, Math.abs((short) sample));
+                int sample = (short) ((buffer.get(i) & 0xff) | (buffer.get(i + 1) << 8));
+                int absolute = Math.abs(sample);
+                framePeak = Math.max(framePeak, absolute);
+                frameSamples++;
+                frameSquareSum += sample * (long) sample;
+                if (absolute >= PCM_CLIP_THRESHOLD) frameClippedSamples++;
             }
-            return peak;
+
+            long nowMs = SystemClock.elapsedRealtime();
+            boolean warn;
+            synchronized (sourceStatsLock) {
+                sourceFrames++;
+                sourceBytes += size;
+                sourceSamples += frameSamples;
+                sourceClippedSamples += frameClippedSamples;
+                sourceSquareSum += frameSquareSum;
+                sourcePeak = Math.max(sourcePeak, framePeak);
+                sourceMaxGapMs = Math.max(sourceMaxGapMs, gapMs);
+                sourceMaxReadMs = Math.max(sourceMaxReadMs, readMs);
+                if (size < requested) sourceShortReads++;
+                warn = (gapMs >= AUDIO_GAP_WARNING_MS || readMs >= AUDIO_GAP_WARNING_MS)
+                        && nowMs - lastCaptureWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+                if (warn) lastCaptureWarningMs = nowMs;
+            }
+            if (warn) {
+                L.w("audio capture delayed role=" + roleName(role)
+                        + ", gapMs=" + gapMs
+                        + ", readMs=" + readMs
+                        + ", requested=" + requested
+                        + ", read=" + size);
+            }
+            return framePeak;
         }
 
-        private boolean shouldLogFrame(long frame) {
-            return frame <= 3 || frame % AUDIO_LOG_INTERVAL_FRAMES == 0;
+        private void recordCaptureReadFailure(int result, int requested, long gapMs, long readMs) {
+            long nowMs = SystemClock.elapsedRealtime();
+            boolean warn;
+            synchronized (sourceStatsLock) {
+                sourceEmptyReads++;
+                sourceMaxGapMs = Math.max(sourceMaxGapMs, gapMs);
+                sourceMaxReadMs = Math.max(sourceMaxReadMs, readMs);
+                warn = nowMs - lastCaptureWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+                if (warn) lastCaptureWarningMs = nowMs;
+            }
+            if (warn) {
+                L.w("audio capture empty role=" + roleName(role)
+                        + ", result=" + result
+                        + ", requested=" + requested
+                        + ", gapMs=" + gapMs
+                        + ", readMs=" + readMs);
+            }
+        }
+
+        private void logSourceStats(String reason) {
+            String message;
+            synchronized (sourceStatsLock) {
+                if (sourceFrames == 0 && sourceEmptyReads == 0) return;
+                long nowMs = SystemClock.elapsedRealtime();
+                long windowMs = Math.max(1, nowMs - sourceWindowStartedMs);
+                double pcmKbps = sourceBytes * 8.0 / windowMs;
+                double clipPercent = sourceSamples == 0
+                        ? 0.0 : sourceClippedSamples * 100.0 / sourceSamples;
+                double rms = sourceSamples == 0
+                        ? 0.0 : Math.sqrt(sourceSquareSum / (double) sourceSamples);
+                double rmsDbfs = rms <= 0.0 ? -120.0 : 20.0 * Math.log10(rms / 32768.0);
+                message = String.format(Locale.US,
+                        "audio source stats role=%s, reason=%s, windowMs=%d"
+                                + ", frames=%d, pcmKB=%d, pcmKbps=%.1f"
+                                + ", captureGapMaxMs=%d, readMaxMs=%d, shortReads=%d, emptyReads=%d"
+                                + ", peak=%d, rmsDbfs=%.1f, clipped=%d/%d(%.3f%%)",
+                        roleName(role), reason, windowMs,
+                        sourceFrames, sourceBytes / 1024, pcmKbps,
+                        sourceMaxGapMs, sourceMaxReadMs, sourceShortReads, sourceEmptyReads,
+                        sourcePeak, rmsDbfs, sourceClippedSamples, sourceSamples, clipPercent);
+                sourceWindowStartedMs = nowMs;
+                sourceFrames = 0;
+                sourceBytes = 0;
+                sourceSamples = 0;
+                sourceClippedSamples = 0;
+                sourceSquareSum = 0;
+                sourceMaxGapMs = 0;
+                sourceMaxReadMs = 0;
+                sourceShortReads = 0;
+                sourceEmptyReads = 0;
+                sourcePeak = 0;
+            }
+            L.i(message);
+        }
+
+        private void recordEncodedTransport(int bytes, long outputGapMs, long sendMs) {
+            long nowMs = SystemClock.elapsedRealtime();
+            boolean warnOutput;
+            boolean warnSend;
+            synchronized (transportStatsLock) {
+                transportFrames++;
+                transportBytes += bytes;
+                transportMaxOutputGapMs = Math.max(transportMaxOutputGapMs, outputGapMs);
+                transportMaxSendMs = Math.max(transportMaxSendMs, sendMs);
+                if (sendMs >= AUDIO_SEND_WARNING_MS) transportSlowSends++;
+                warnOutput = outputGapMs >= AUDIO_GAP_WARNING_MS
+                        && nowMs - lastOutputWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+                warnSend = sendMs >= AUDIO_SEND_WARNING_MS
+                        && nowMs - lastSendWarningMs >= AUDIO_WARNING_RATE_LIMIT_MS;
+                if (warnOutput) lastOutputWarningMs = nowMs;
+                if (warnSend) lastSendWarningMs = nowMs;
+            }
+            if (warnOutput) {
+                L.w("audio encoder output gap role=" + roleName(role)
+                        + ", gapMs=" + outputGapMs
+                        + ", bytes=" + bytes);
+            }
+            if (warnSend) {
+                L.w("audio socket send delayed role=" + roleName(role)
+                        + ", sendMs=" + sendMs
+                        + ", bytes=" + bytes
+                        + ", tagged=" + taggedAudio);
+            }
+        }
+
+        private void logTransportStats(String reason) {
+            String message;
+            synchronized (transportStatsLock) {
+                if (transportFrames == 0) return;
+                long nowMs = SystemClock.elapsedRealtime();
+                long windowMs = Math.max(1, nowMs - transportWindowStartedMs);
+                double encodedKbps = transportBytes * 8.0 / windowMs;
+                message = String.format(Locale.US,
+                        "audio transport stats role=%s, reason=%s, windowMs=%d"
+                                + ", frames=%d, encodedKB=%d, encodedKbps=%.1f"
+                                + ", encoderGapMaxMs=%d, sendMaxMs=%d, slowSends=%d, tagged=%s",
+                        roleName(role), reason, windowMs,
+                        transportFrames, transportBytes / 1024, encodedKbps,
+                        transportMaxOutputGapMs, transportMaxSendMs, transportSlowSends, taggedAudio);
+                transportWindowStartedMs = nowMs;
+                transportFrames = 0;
+                transportBytes = 0;
+                transportMaxOutputGapMs = 0;
+                transportMaxSendMs = 0;
+                transportSlowSends = 0;
+            }
+            L.i(message);
         }
 
         private String hexPrefix(ByteBuffer buffer, int maxBytes) {
@@ -325,11 +516,17 @@ public final class AudioEncode {
             return result.toString();
         }
 
+        private long nanosToRoundedUpMillis(long nanos) {
+            return nanos <= 0 ? 0 : (nanos + 999_999L) / 1_000_000L;
+        }
+
         private void release() {
             if (released) return;
             released = true;
             if (inputThread != null) inputThread.interrupt();
             if (outputThread != null) outputThread.interrupt();
+            logSourceStats("release");
+            logTransportStats("release");
             capture.release();
             try {
                 encoder.stop();
@@ -339,6 +536,7 @@ public final class AudioEncode {
                 encoder.release();
             } catch (Exception ignored) {
             }
+            L.i("audio pipeline released role=" + roleName(role));
         }
     }
 }

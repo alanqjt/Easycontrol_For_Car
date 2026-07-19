@@ -7,6 +7,7 @@ import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.view.Surface;
 import top.eiyooooo.easycontrol.server.Scrcpy;
@@ -23,6 +24,8 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 
 public final class VideoEncode {
+    private static final long STATS_INTERVAL_MS = 2_000L;
+    private static final long SLOW_VIDEO_WRITE_US = 25_000L;
     // 视频编码器实例。
     private static MediaCodec encoder;
     // 视频编码参数缓存。
@@ -31,6 +34,13 @@ public final class VideoEncode {
     public static boolean isHasChangeConfig = false;
     // 是否启用 H.265。
     private static boolean useH265;
+    private static long statsStartedAtMs;
+    private static long statsFrames;
+    private static long statsBytes;
+    private static long statsKeyFrames;
+    private static long statsConfigFrames;
+    private static long statsWriteTimeUs;
+    private static long statsMaxWriteTimeUs;
 
     // 主显示器绑定对象。
     private static IBinder display;
@@ -131,6 +141,12 @@ public final class VideoEncode {
         }
         // 编码器真正启动后，后续才会有输出帧。
         encoder.start();
+        resetVideoStats();
+        L.i("video encode started, codec=" + encoder.getName()
+                + ", size=" + Device.videoSize.first + "x" + Device.videoSize.second
+                + ", targetFps=" + Options.maxFps
+                + ", targetMbps=" + (Options.maxVideoBit / 1_000_000f)
+                + ", h265=" + useH265);
         ControlPacket.sendVideoSizeEvent();
     }
 
@@ -161,13 +177,59 @@ public final class VideoEncode {
             int outIndex;
             do outIndex = encoder.dequeueOutputBuffer(bufferInfo, -1); while (outIndex < 0);
             ByteBuffer buffer = encoder.getOutputBuffer(outIndex);
-            if (buffer == null) return;
-            // 把编码后的帧连同时间戳一起发给客户端。
-            ControlPacket.sendVideoEvent(bufferInfo.presentationTimeUs, buffer);
-            encoder.releaseOutputBuffer(outIndex, false);
+            if (buffer == null) {
+                encoder.releaseOutputBuffer(outIndex, false);
+                return;
+            }
+            buffer.position(bufferInfo.offset);
+            buffer.limit(bufferInfo.offset + bufferInfo.size);
+            long writeStartedNs = SystemClock.elapsedRealtimeNanos();
+            try {
+                // 把编码后的帧连同时间戳一起发给客户端；同步写耗时可反映 ADB/客户端背压。
+                ControlPacket.sendVideoEvent(bufferInfo.presentationTimeUs, buffer);
+            } finally {
+                encoder.releaseOutputBuffer(outIndex, false);
+            }
+            long writeTimeUs = (SystemClock.elapsedRealtimeNanos() - writeStartedNs) / 1_000L;
+            recordVideoStats(bufferInfo.size, bufferInfo.flags, writeTimeUs);
         } catch (IllegalStateException e) {
             L.e("encodeOut error", e);
         }
+    }
+
+    private static void resetVideoStats() {
+        statsStartedAtMs = SystemClock.elapsedRealtime();
+        statsFrames = 0;
+        statsBytes = 0;
+        statsKeyFrames = 0;
+        statsConfigFrames = 0;
+        statsWriteTimeUs = 0;
+        statsMaxWriteTimeUs = 0;
+    }
+
+    private static void recordVideoStats(int size, int flags, long writeTimeUs) {
+        statsFrames++;
+        statsBytes += size;
+        statsWriteTimeUs += writeTimeUs;
+        statsMaxWriteTimeUs = Math.max(statsMaxWriteTimeUs, writeTimeUs);
+        if ((flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0) statsKeyFrames++;
+        if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) statsConfigFrames++;
+
+        long now = SystemClock.elapsedRealtime();
+        long elapsedMs = now - statsStartedAtMs;
+        if (elapsedMs < STATS_INTERVAL_MS) return;
+        float fps = statsFrames * 1_000f / elapsedMs;
+        float mbps = statsBytes * 8f / elapsedMs / 1_000f;
+        float averageWriteMs = statsFrames == 0 ? 0f : statsWriteTimeUs / 1_000f / statsFrames;
+        float maxWriteMs = statsMaxWriteTimeUs / 1_000f;
+        String message = String.format(java.util.Locale.US,
+                "video encode stats codec=%s, size=%dx%d, out=%.1ffps/%.2fMbps, target=%dfps/%.1fMbps, socketWrite=%.2fms avg/%.2fms max, key=%d, config=%d",
+                encoder.getName(), Device.videoSize.first, Device.videoSize.second, fps, mbps,
+                Options.maxFps, Options.maxVideoBit / 1_000_000f, averageWriteMs, maxWriteMs,
+                statsKeyFrames, statsConfigFrames);
+        if (statsMaxWriteTimeUs >= SLOW_VIDEO_WRITE_US) L.w(message + ", transport backpressure suspected");
+        else L.i(message);
+        resetVideoStats();
     }
 
     public static void release() {

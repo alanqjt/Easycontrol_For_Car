@@ -74,6 +74,11 @@ public class MainActivity extends Activity {
     setContentView(mainActivity.getRoot());
     rememberMainLayoutPadding();
     activeInstance = this;
+    mainActivity.getRoot().addOnLayoutChangeListener((view, left, top, right, bottom,
+                                                       oldLeft, oldTop, oldRight, oldBottom) -> {
+      if (right - left == oldRight - oldLeft && bottom - top == oldBottom - oldTop) return;
+      view.post(this::updateResponsiveLayout);
+    });
     mainActivity.getRoot().post(this::updateResponsiveLayout);
     if (!AppData.setting.getPrivacyPolicyAccepted()) showPrivacyPolicyDialog();
     else continueAfterPrivacyAccepted();
@@ -518,16 +523,16 @@ public class MainActivity extends Activity {
   private void updateResponsiveLayout() {
     if (mainActivity == null) return;
     Configuration configuration = getResources().getConfiguration();
-    int widthDp = configuration.screenWidthDp;
-    int heightDp = configuration.screenHeightDp;
-    if (widthDp <= 0) {
-      widthDp = (int) (mainActivity.getRoot().getWidth() / getResources().getDisplayMetrics().density);
-    }
-    if (heightDp <= 0) {
-      heightDp = (int) (mainActivity.getRoot().getHeight() / getResources().getDisplayMetrics().density);
-    }
-    boolean portraitWindow = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-            || (widthDp > 0 && heightDp > 0 && widthDp < heightDp);
+    float density = getResources().getDisplayMetrics().density;
+    int rootWidth = mainActivity.getRoot().getWidth();
+    int rootHeight = mainActivity.getRoot().getHeight();
+    int widthDp = rootWidth > 0 && density > 0f
+            ? Math.round(rootWidth / density) : configuration.screenWidthDp;
+    int heightDp = rootHeight > 0 && density > 0f
+            ? Math.round(rootHeight / density) : configuration.screenHeightDp;
+    boolean portraitWindow = widthDp > 0 && heightDp > 0
+            ? widthDp < heightDp
+            : configuration.orientation == Configuration.ORIENTATION_PORTRAIT;
     boolean compact = widthDp > 0 && (portraitWindow || widthDp < 1200);
     if (compactHeader != null && compactHeader == compact) return;
     compactHeader = compact;

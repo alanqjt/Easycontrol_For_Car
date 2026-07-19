@@ -50,6 +50,9 @@ public final class EmbeddedView {
     binding.toolbarContainer.setVisibility(View.GONE);
     binding.navBar.setVisibility(View.GONE);
     MainActivity.attachEmbeddedProjection(binding.getRoot());
+    // 连接线程创建虚拟屏前先记录真实宿主尺寸，避免分屏启动时误用整窗回退值。
+    binding.getRoot().post(this::updateMaxSize);
+    binding.getRoot().postDelayed(this::updateMaxSize, 250);
     Log.i(TAG, "embedded loading attached uuid=" + clientView.device.uuid);
   }
 
@@ -102,7 +105,6 @@ public final class EmbeddedView {
   }
 
   private void updateMaxSize() {
-    if (!ready) return;
     int width = binding.textureViewLayout.getMeasuredWidth();
     int height = binding.textureViewLayout.getMeasuredHeight();
     int mode = clientView.mode;
@@ -112,10 +114,11 @@ public final class EmbeddedView {
     lastHostHeight = height;
     lastHostMode = mode;
     clientView.updateMaxSize(new Pair<>(width, height));
-    // 高德等 GL 应用不适合在运行中 resize 虚拟屏，尺寸在创建虚拟屏时一次确定。
+    clientView.notifyEmbeddedHostSizeChanged(width, height);
     Log.i(TAG, "embedded host resized uuid=" + clientView.device.uuid
             + ", width=" + width + ", height=" + height
-            + ", mode=" + mode + ", fill=true, runtimeDisplayResize=false");
+            + ", mode=" + mode + ", ready=" + ready
+            + ", scale=fit-center, runtimeDisplayResize=true");
   }
 
   private void setButtonListeners() {

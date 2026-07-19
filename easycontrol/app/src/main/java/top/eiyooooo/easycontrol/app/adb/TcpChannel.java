@@ -1,5 +1,7 @@
 package top.eiyooooo.easycontrol.app.adb;
 
+import android.util.Log;
+
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,16 +15,27 @@ import java.nio.ByteBuffer;
  */
 
 public class TcpChannel implements AdbChannel {
+  private static final String TRANSPORT_LOG_TAG = "EasycontrolTransport";
+  private static final int TCP_BUFFER_SIZE = 1024 * 1024;
+
   private final Socket socket = new Socket();
   private final InputStream inputStream;
   private final OutputStream outputStream;
 
   public TcpChannel(String host, int port, boolean test) throws IOException {
+    socket.setReceiveBufferSize(TCP_BUFFER_SIZE);
+    socket.setSendBufferSize(TCP_BUFFER_SIZE);
     socket.setTcpNoDelay(true);
+    socket.setKeepAlive(true);
+    socket.setPerformancePreferences(0, 2, 1);
     socket.connect(new InetSocketAddress(host, port), 5000);
     if (test) socket.setSoTimeout(2200);
     inputStream = socket.getInputStream();
     outputStream = socket.getOutputStream();
+    Log.i(TRANSPORT_LOG_TAG, "ADB TCP connected address=" + host + ":" + port
+            + ", receiveBuffer=" + socket.getReceiveBufferSize()
+            + ", sendBuffer=" + socket.getSendBufferSize()
+            + ", tcpNoDelay=" + socket.getTcpNoDelay());
   }
 
   @Override
