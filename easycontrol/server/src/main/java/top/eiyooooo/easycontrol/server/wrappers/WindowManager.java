@@ -21,6 +21,13 @@ public final class WindowManager {
     private static Method thawDisplayRotationMethod = null;
     private static Method setFixedToUserRotationMethod = null;
     private static Method setIgnoreOrientationRequestMethod = null;
+    private static Method setShouldShowSystemDecorsMethod = null;
+    private static Method shouldShowSystemDecorsMethod = null;
+    private static boolean shouldShowSystemDecorsMethodUnavailable;
+    private static Method hideTransientBarsMethod = null;
+    private static boolean hideTransientBarsMethodUnavailable;
+    private static Method hasNavigationBarMethod = null;
+    private static boolean hasNavigationBarMethodUnavailable;
     private static int freezeDisplayRotationMethodVersion;
     private static int isDisplayRotationFrozenMethodVersion;
     private static int thawDisplayRotationMethodVersion;
@@ -248,6 +255,98 @@ public final class WindowManager {
         } catch (Exception e) {
             L.e("Could not set ignore-orientation-request for display " + displayId, e);
             return false;
+        }
+    }
+
+    /**
+     * 控制指定副屏是否显示系统状态栏和导航栏。
+     */
+    public static boolean setShouldShowSystemDecors(int displayId, boolean shouldShow) {
+        try {
+            if (setShouldShowSystemDecorsMethod == null) {
+                setShouldShowSystemDecorsMethod = manager.getClass().getMethod(
+                        "setShouldShowSystemDecors", int.class, boolean.class);
+            }
+            setShouldShowSystemDecorsMethod.invoke(manager, displayId, shouldShow);
+            L.i("system decorations changed, displayId=" + displayId
+                    + ", shouldShow=" + shouldShow);
+            return true;
+        } catch (Exception e) {
+            L.e("Could not change system decorations for display " + displayId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 读取 WindowManager 最终采用的系统装饰状态。null 表示当前系统没有暴露查询接口。
+     */
+    public static Boolean shouldShowSystemDecors(int displayId) {
+        if (shouldShowSystemDecorsMethodUnavailable) return null;
+        try {
+            if (shouldShowSystemDecorsMethod == null) {
+                shouldShowSystemDecorsMethod = manager.getClass().getMethod(
+                        "shouldShowSystemDecors", int.class);
+            }
+            Object result = shouldShowSystemDecorsMethod.invoke(manager, displayId);
+            return result instanceof Boolean ? (Boolean) result : null;
+        } catch (NoSuchMethodException e) {
+            shouldShowSystemDecorsMethodUnavailable = true;
+            L.w("System decorations state query is unavailable");
+            return null;
+        } catch (Exception e) {
+            L.e("Could not query system decorations for display " + displayId, e);
+            return null;
+        }
+    }
+
+    /**
+     * 请求 SystemUI 立即收起指定显示器上已经创建的瞬态系统栏。
+     */
+    public static boolean hideTransientBars(int displayId) {
+        if (hideTransientBarsMethodUnavailable) return false;
+        try {
+            if (hideTransientBarsMethod == null) {
+                hideTransientBarsMethod = manager.getClass().getMethod(
+                        "hideTransientBars", int.class);
+            }
+            hideTransientBarsMethod.invoke(manager, displayId);
+            L.i("transient system bars hide requested, displayId=" + displayId);
+            return true;
+        } catch (NoSuchMethodException e) {
+            hideTransientBarsMethodUnavailable = true;
+            L.w("Transient system bars API is unavailable");
+            return false;
+        } catch (Exception e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof SecurityException) {
+                hideTransientBarsMethodUnavailable = true;
+                L.w("Transient system bars API is not permitted for the shell process");
+            } else {
+                L.e("Could not hide transient system bars for display " + displayId, e);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * 查询 WindowManager 是否仍为指定显示器维护导航栏窗口。
+     */
+    public static Boolean hasNavigationBar(int displayId) {
+        if (hasNavigationBarMethodUnavailable) return null;
+        try {
+            if (hasNavigationBarMethod == null) {
+                hasNavigationBarMethod = manager.getClass().getMethod(
+                        "hasNavigationBar", int.class);
+            }
+            Object result = hasNavigationBarMethod.invoke(manager, displayId);
+            return result instanceof Boolean ? (Boolean) result : null;
+        } catch (NoSuchMethodException e) {
+            hasNavigationBarMethodUnavailable = true;
+            L.w("Navigation bar state query is unavailable");
+            return null;
+        } catch (Exception e) {
+            L.e("Could not query navigation bar for display " + displayId, e);
+            return null;
         }
     }
 

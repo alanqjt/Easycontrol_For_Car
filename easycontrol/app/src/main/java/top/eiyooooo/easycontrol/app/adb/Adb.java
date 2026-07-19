@@ -37,6 +37,7 @@ public class Adb {
   private static final ConcurrentHashMap<String, Object> adbCreationLocks = new ConcurrentHashMap<>();
   private static final long RESPONSE_TIMEOUT_MS = 15_000;
   private static final long SERVER_BOOTSTRAP_TIMEOUT_MS = 25_000;
+  private static final String SERVER_READY_RESPONSE = "easycontrol-server-ready-v1";
   private static final long STREAM_OPEN_TIMEOUT_MS = 15_000;
   private static final long STREAM_CLOSE_TIMEOUT_MS = 60_000;
   private static final long HANDSHAKE_QUIET_PERIOD_MS = 500;
@@ -261,15 +262,28 @@ public class Adb {
         stage = "open helper shell";
         if (serverShell != null) serverShell.close();
         String cmd = "CLASSPATH=" + serverName + " app_process / top.eiyooooo.easycontrol.server.Server\n";
+        byte[] commandBytes = cmd.getBytes(StandardCharsets.UTF_8);
         serverShell = getShell();
-        serverShell.write(ByteBuffer.wrap(cmd.getBytes(StandardCharsets.UTF_8)));
-        stage = "wait helper shell output";
-        waitingData(0);
-        L.log(uuid, "ADB helper shell started in " + (SystemClock.elapsedRealtime() - startedAt) + " ms");
+        serverShell.write(ByteBuffer.wrap(commandBytes));
+        stage = "wait helper ready frame";
+        String readyResponse = new String(
+                readFramedServerResponse("bootstrap", commandBytes.length + 1,
+                        SERVER_BOOTSTRAP_TIMEOUT_MS),
+                StandardCharsets.UTF_8);
+        if (!SERVER_READY_RESPONSE.equals(readyResponse)) {
+          throw new IOException("unexpected helper ready response: " + readyResponse);
+        }
+        long elapsedMs = SystemClock.elapsedRealtime() - startedAt;
+        L.log(uuid, "ADB helper ready in " + elapsedMs + " ms");
+        Log.i(TRANSPORT_LOG_TAG, "ADB helper ready connection=" + uuid
+                + ", transport=" + (tcpTransport ? "WiFi" : "USB")
+                + ", elapsedMs=" + elapsedMs);
       } catch (Exception e) {
         Exception failure = new IOException("ADB helper bootstrap failed at " + stage + ": " + e.getMessage(), e);
         serverStartFailure = failure;
-        if (serverShell != null) serverShell.close();
+        BufferStream failedShell = serverShell;
+        serverShell = null;
+        if (failedShell != null) failedShell.close();
         L.log(uuid, failure);
         PublicTools.logToast(AppData.main.getString(R.string.log_notify));
       }
@@ -365,7 +379,79 @@ public class Adb {
   }
 
   private String getStringResponse(String request, String... args) throws Exception {
-    return new String(getResponse(request, args), StandardCharsets.UTF_8);
+    try {
+      return new String(getResponse(request, args), StandardCharsets.UTF_8);
+    } catch (InterruptedException e) {
+      throw e;
+    } catch (Exception firstFailure) {
+      if (!isRecoverableServerFailure(firstFailure)) throw firstFailure;
+
+      boolean canRetry = canRetryServerRequest(request);
+      Log.w(TRANSPORT_LOG_TAG, "ADB helper request failed connection=" + uuid
+              + ", request=" + request
+              + ", retryable=" + canRetry
+              + "; restarting control helper", firstFailure);
+      restartControlServer(request, firstFailure);
+      if (!canRetry) throw firstFailure;
+
+      try {
+        String response = new String(getResponse(request, args), StandardCharsets.UTF_8);
+        Log.i(TRANSPORT_LOG_TAG, "ADB helper request recovered connection=" + uuid
+                + ", request=" + request);
+        return response;
+      } catch (Exception retryFailure) {
+        retryFailure.addSuppressed(firstFailure);
+        throw retryFailure;
+      }
+    }
+  }
+
+  private void restartControlServer(String request, Exception requestFailure) throws Exception {
+    synchronized (serverRequestLock) {
+      if (closeStarted.get()) throw new InterruptedException("ADB connection is closed");
+      BufferStream staleShell = serverShell;
+      serverShell = null;
+      if (staleShell != null) staleShell.close();
+      serverStartFailure = null;
+
+      L.log(uuid, "ADB helper restart after request failure, request=" + request);
+      startServer();
+      if (serverStartFailure != null) {
+        serverStartFailure.addSuppressed(requestFailure);
+        throw serverStartFailure;
+      }
+      if (serverShell == null || serverShell.isClosed()) {
+        IOException restartFailure = new IOException("ADB helper restart did not produce a live shell");
+        restartFailure.addSuppressed(requestFailure);
+        throw restartFailure;
+      }
+    }
+  }
+
+  private static boolean isRecoverableServerFailure(Throwable failure) {
+    Throwable current = failure;
+    while (current != null) {
+      if (current instanceof IOException) return true;
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private static boolean canRetryServerRequest(String request) {
+    switch (request) {
+      case "getPhoneInfo":
+      case "getDisplayInfo":
+      case "getRecentTasks":
+      case "getIcon":
+      case "getAllAppInfo":
+      case "getAppDetail":
+      case "getAppAudioInfo":
+      case "getAppMainActivity":
+      case "getNightMode":
+        return true;
+      default:
+        return false;
+    }
   }
 
   private byte[] getResponse(String request, String[] args) throws Exception {
@@ -381,38 +467,72 @@ public class Adb {
       if (serverShell == null || serverShell.isClosed()) throw new IOException("server shell is closed");
       serverShell.readAllBytes();
       serverShell.write(ByteBuffer.wrap(requestBytes));
-      waitingData(requestBytes.length + 1);
-      serverShell.readByteArray(requestBytes.length + 1);
-      waitingData(8);
-      int len1 = serverShell.readInt();
-      int len2 = serverShell.readInt();
-      if (len1 != len2 || len1 < 0 || len1 > MAX_SERVER_RESPONSE_SIZE) throw new IOException("bad server response length");
-      if (len1 == 0) return new byte[0];
-      waitingData(len1);
-      return serverShell.readByteArray(len1).array();
+      return readFramedServerResponse(request, requestBytes.length + 1);
     }
   }
 
-  private void waitingData(int byteNum) throws InterruptedException, IOException {
-    long deadline = SystemClock.elapsedRealtime() + RESPONSE_TIMEOUT_MS;
-    int previousSize = -1;
-    int stableChecks = 0;
+  /**
+   * 交互式 shell 会因厂商实现插入 CR、退格或换行，不能按请求长度硬跳过命令回显。
+   * helper 连续写入两份相同的响应长度，因此扫描该双长度帧头后再读取正文。
+   */
+  private byte[] readFramedServerResponse(String request, int expectedEchoBytes) throws Exception {
+    return readFramedServerResponse(request, expectedEchoBytes, RESPONSE_TIMEOUT_MS);
+  }
+
+  private byte[] readFramedServerResponse(String request, int expectedEchoBytes,
+                                          long timeoutMs) throws Exception {
+    long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+    byte[] header = new byte[8];
+    int headerSize = 0;
+    int consumedBytes = 0;
+
+    while (SystemClock.elapsedRealtime() < deadline) {
+      waitForServerData(1, deadline);
+      byte value = serverShell.readByte();
+      consumedBytes++;
+
+      if (headerSize < header.length) {
+        header[headerSize++] = value;
+      } else {
+        System.arraycopy(header, 1, header, 0, header.length - 1);
+        header[header.length - 1] = value;
+      }
+
+      if (headerSize != header.length) continue;
+      int len1 = readBigEndianInt(header, 0);
+      int len2 = readBigEndianInt(header, 4);
+      if (len1 != len2 || len1 < 0 || len1 > MAX_SERVER_RESPONSE_SIZE) continue;
+
+      int skippedPrefixBytes = consumedBytes - header.length;
+      Log.i(TRANSPORT_LOG_TAG,
+          "ADB helper response frame recovered connection=" + uuid
+              + ", request=" + request
+              + ", skippedPrefixBytes=" + skippedPrefixBytes
+              + ", expectedEchoBytes=" + expectedEchoBytes
+              + ", payloadBytes=" + len1);
+      if (len1 == 0) return new byte[0];
+      waitForServerData(len1, deadline);
+      return serverShell.readByteArray(len1).array();
+    }
+    throw new IOException("timed out waiting for framed server response after "
+            + timeoutMs + " ms: " + request);
+  }
+
+  private void waitForServerData(int byteNum, long deadline) throws InterruptedException, IOException {
     while (SystemClock.elapsedRealtime() < deadline) {
       BufferStream currentShell = serverShell;
       if (currentShell == null || currentShell.isClosed()) throw new IOException("server shell is closed");
-      int newSize = currentShell.getSize();
-      if (byteNum > 0 && newSize >= byteNum) return;
-      if (byteNum == 0 && newSize > 0) {
-        if (newSize == previousSize) {
-          if (++stableChecks >= 2) return;
-        } else {
-          previousSize = newSize;
-          stableChecks = 0;
-        }
-      }
-      Thread.sleep(50);
+      if (currentShell.getSize() >= byteNum) return;
+      Thread.sleep(10);
     }
-    throw new IOException("timed out waiting for server data");
+    throw new IOException("timed out waiting for framed server data");
+  }
+
+  private static int readBigEndianInt(byte[] bytes, int offset) {
+    return ((bytes[offset] & 0xff) << 24)
+        | ((bytes[offset + 1] & 0xff) << 16)
+        | ((bytes[offset + 2] & 0xff) << 8)
+        | (bytes[offset + 3] & 0xff);
   }
 
   private BufferStream open(String destination, boolean canMultipleSend) throws InterruptedException {

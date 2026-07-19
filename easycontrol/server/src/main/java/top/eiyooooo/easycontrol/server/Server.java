@@ -16,15 +16,18 @@ import top.eiyooooo.easycontrol.server.wrappers.WindowManager;
 import java.io.DataOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
+import java.util.Set;
 /**
  * 服务端管理入口。
  * 这个类更像是一个本地命令壳，用来接收调试指令、创建虚拟显示器、
  * 打开应用、调整分辨率，以及把结果回写给上层调用者。
  */
 public class Server {
+    private static final String READY_RESPONSE = "easycontrol-server-ready-v1";
     // 当前 Server 实例持有的通道对象，负责真正和系统服务交互。
     Channel channel;
     // 标准输出流，用于向调用者回写结果。
@@ -39,8 +42,10 @@ public class Server {
         Workarounds.apply(0);
         // 初始化系统服务代理，后续很多能力都靠它转发。
         ServiceManager.setManagers();
-        // 创建 Server，启动命令处理线程。
-        new Server();
+        // 创建 Server，启动命令处理线程。只有系统代理与命令线程都初始化后，
+        // 才发送二进制就绪帧，避免客户端把交互式 shell 的命令回显误判为启动成功。
+        Server server = new Server();
+        server.postResponse(READY_RESPONSE);
         // 主线程保持存活，直到外部结束进程。
         while (true) {
             Thread.sleep(1000);
@@ -126,6 +131,8 @@ public class Server {
 
     // 保存创建过的虚拟显示器，方便后面 resize / release。
     Map<Integer, VirtualDisplay> cache = new HashMap<>();
+    private final Object embeddedDisplayPolicyLock = new Object();
+    private final Set<Integer> embeddedDisplayIds = new HashSet<>();
 
     private void handleRequest(HashMap<String, String> request) {
         try {
@@ -215,19 +222,43 @@ public class Server {
                     if (width <= 0 || height <= 0 || density <= 0)
                         throw new Exception("Invalid virtual display configuration");
 
+                    boolean embeddedWide = "embedded-wide".equals(profile);
                     // 真正创建虚拟显示器。
-                    VirtualDisplay display = channel.createVirtualDisplay(width, height, density);
+                    VirtualDisplay display = channel.createVirtualDisplay(
+                            width, height, density, embeddedWide);
                     if (display == null) throw new Exception("Failed to create virtual display");
                     int createdDisplayId = display.getDisplay().getDisplayId();
-                    // 先把自然方向锁定为 rotation=0；内嵌宽屏再忽略应用强制竖屏请求。
-                    WindowManager.freezeRotation(createdDisplayId, 0);
-                    boolean fixedToUserRotation = WindowManager.setFixedToUserRotation(
-                            createdDisplayId, true);
-                    boolean embeddedWide = "embedded-wide".equals(profile);
-                    boolean ignoreOrientationRequest = embeddedWide
-                            && WindowManager.setIgnoreOrientationRequest(createdDisplayId, true);
                     // 缓存下来，后续可以重设尺寸或释放。
                     cache.put(createdDisplayId, display);
+                    boolean fixedToUserRotation;
+                    boolean ignoreOrientationRequest;
+                    boolean systemDecorationsRequestApplied;
+                    Boolean systemDecorationsShown;
+                    boolean transientBarsHideRequested;
+                    Boolean navigationBarPresent;
+                    if (embeddedWide) {
+                        synchronized (embeddedDisplayPolicyLock) {
+                            embeddedDisplayIds.add(createdDisplayId);
+                        }
+                        EmbeddedDisplayPolicyResult policy = applyEmbeddedDisplayPolicy(
+                                createdDisplayId, "create");
+                        fixedToUserRotation = policy.fixedToUserRotation;
+                        ignoreOrientationRequest = policy.ignoreOrientationRequest;
+                        systemDecorationsRequestApplied = policy.systemDecorationsRequestApplied;
+                        systemDecorationsShown = policy.systemDecorationsShown;
+                        transientBarsHideRequested = policy.transientBarsHideRequested;
+                        navigationBarPresent = policy.navigationBarPresent;
+                        scheduleEmbeddedDisplayPolicyRefresh(createdDisplayId, "create");
+                    } else {
+                        WindowManager.freezeRotation(createdDisplayId, 0);
+                        fixedToUserRotation = WindowManager.setFixedToUserRotation(
+                                createdDisplayId, true);
+                        ignoreOrientationRequest = false;
+                        systemDecorationsRequestApplied = false;
+                        systemDecorationsShown = null;
+                        transientBarsHideRequested = false;
+                        navigationBarPresent = null;
+                    }
                     DisplayInfo createdDisplay = DisplayManager.getDisplayInfo(createdDisplayId);
                     L.i("virtual display created"
                             + ", profile=" + profile
@@ -240,7 +271,11 @@ public class Server {
                             + "@" + createdDisplay.density + "dpi")
                             + ", actualRotation=" + (createdDisplay == null ? "unknown" : createdDisplay.rotation)
                             + ", fixedToUserRotation=" + fixedToUserRotation
-                            + ", ignoreOrientationRequest=" + ignoreOrientationRequest);
+                            + ", ignoreOrientationRequest=" + ignoreOrientationRequest
+                            + ", systemDecorationsRequestApplied=" + systemDecorationsRequestApplied
+                            + ", systemDecorationsShown=" + formatNullableBoolean(systemDecorationsShown)
+                            + ", transientBarsHideRequested=" + transientBarsHideRequested
+                            + ", navigationBarPresent=" + formatNullableBoolean(navigationBarPresent));
                     int[] displayIds = DisplayManager.getDisplayIds();
                     for (int displayId : displayIds) {
                         L.d(">>>display -> " + displayId);
@@ -248,6 +283,10 @@ public class Server {
                     postResponse("success create display, fixedToUserRotation="
                             + fixedToUserRotation
                             + ", ignoreOrientationRequest=" + ignoreOrientationRequest
+                            + ", systemDecorationsRequestApplied=" + systemDecorationsRequestApplied
+                            + ", systemDecorationsShown=" + formatNullableBoolean(systemDecorationsShown)
+                            + ", transientBarsHideRequested=" + transientBarsHideRequested
+                            + ", navigationBarPresent=" + formatNullableBoolean(navigationBarPresent)
                             + ", id -> " + createdDisplayId);
                     break;
                 }
@@ -294,6 +333,8 @@ public class Server {
                         DisplayInfo resizedDisplay = waitForDisplayConfiguration(
                                 id, width, height, density, 1200);
                         int refreshedTasks = channel.relayoutTasksOnDisplay(id);
+                        applyEmbeddedDisplayPolicy(id, "resize-and-relayout");
+                        scheduleEmbeddedDisplayPolicyRefresh(id, "resize-and-relayout");
                         postResponse("success resize display, id -> " + id
                                 + ", actual=" + (resizedDisplay == null ? "unknown"
                                 : resizedDisplay.size.first + "x" + resizedDisplay.size.second
@@ -320,8 +361,12 @@ public class Server {
                             }
                         }
                     }
+                    int displayId = Integer.parseInt(id);
+                    synchronized (embeddedDisplayPolicyLock) {
+                        embeddedDisplayIds.remove(displayId);
+                    }
                     display.release();
-                    cache.remove(Integer.parseInt(id));
+                    cache.remove(displayId);
                     postResponse("success release display, id -> " + id);
                     break;
                 }
@@ -335,8 +380,11 @@ public class Server {
                     if (activity == null) activity = channel.getAppMainActivity(packageName);
                     if (id == null) id = "0";
 
-                    String error = channel.openApp(packageName, activity, Integer.parseInt(id));
+                    int displayId = Integer.parseInt(id);
+                    String error = channel.openApp(packageName, activity, displayId);
                     if (error != null) throw new Exception(error);
+                    applyEmbeddedDisplayPolicy(displayId, "open-app");
+                    scheduleEmbeddedDisplayPolicyRefresh(displayId, "open-app");
                     postResponse("success");
                     break;
                 }
@@ -347,9 +395,12 @@ public class Server {
                     boolean recreate = "1".equals(request.get("recreate"));
                     if (taskId == null) throw new Exception("parameter 'taskId' not found");
                     if (displayId == null) throw new Exception("parameter 'displayId' not found");
+                    int targetDisplayId = Integer.parseInt(displayId);
                     String strategy = channel.moveTaskToDisplay(
-                            Integer.parseInt(taskId), Integer.parseInt(displayId), packageName,
+                            Integer.parseInt(taskId), targetDisplayId, packageName,
                             recreate);
+                    applyEmbeddedDisplayPolicy(targetDisplayId, "move-task");
+                    scheduleEmbeddedDisplayPolicyRefresh(targetDisplayId, "move-task");
                     postResponse("success move task, strategy=" + strategy);
                     break;
                 }
@@ -438,5 +489,87 @@ public class Server {
                 : current.size.first + "x" + current.size.second
                 + "@" + current.density + "dpi"));
         return current;
+    }
+
+    private EmbeddedDisplayPolicyResult applyEmbeddedDisplayPolicy(int displayId, String reason) {
+        synchronized (embeddedDisplayPolicyLock) {
+            if (!embeddedDisplayIds.contains(displayId)) return null;
+            WindowManager.freezeRotation(displayId, 0);
+            boolean fixedToUserRotation = WindowManager.setFixedToUserRotation(displayId, true);
+            boolean ignoreOrientationRequest = WindowManager.setIgnoreOrientationRequest(
+                    displayId, true);
+            boolean systemDecorationsRequestApplied = WindowManager.setShouldShowSystemDecors(
+                    displayId, false);
+            boolean transientBarsHideRequested = WindowManager.hideTransientBars(displayId);
+            Boolean systemDecorationsShown = WindowManager.shouldShowSystemDecors(displayId);
+            Boolean navigationBarPresent = WindowManager.hasNavigationBar(displayId);
+            L.i("embedded display policy applied"
+                    + ", displayId=" + displayId
+                    + ", reason=" + reason
+                    + ", fixedToUserRotation=" + fixedToUserRotation
+                    + ", ignoreOrientationRequest=" + ignoreOrientationRequest
+                    + ", requestedSystemDecors=false"
+                    + ", requestApplied=" + systemDecorationsRequestApplied
+                    + ", actualSystemDecors=" + formatNullableBoolean(systemDecorationsShown)
+                    + ", transientBarsHideRequested=" + transientBarsHideRequested
+                    + ", navigationBarPresent=" + formatNullableBoolean(navigationBarPresent));
+            return new EmbeddedDisplayPolicyResult(
+                    fixedToUserRotation,
+                    ignoreOrientationRequest,
+                    systemDecorationsRequestApplied,
+                    systemDecorationsShown,
+                    transientBarsHideRequested,
+                    navigationBarPresent);
+        }
+    }
+
+    private void scheduleEmbeddedDisplayPolicyRefresh(int displayId, String reason) {
+        synchronized (embeddedDisplayPolicyLock) {
+            if (!embeddedDisplayIds.contains(displayId)) return;
+        }
+        Thread thread = new Thread(() -> {
+            int[] delaysMs = {250, 750, 1500};
+            for (int i = 0; i < delaysMs.length; i++) {
+                try {
+                    Thread.sleep(delaysMs[i]);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                if (applyEmbeddedDisplayPolicy(displayId,
+                        reason + "+" + (i == 0 ? 250 : i == 1 ? 1000 : 2500) + "ms") == null) {
+                    return;
+                }
+            }
+        }, "easycontrol-display-policy-" + displayId);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private static String formatNullableBoolean(Boolean value) {
+        return value == null ? "unknown" : String.valueOf(value);
+    }
+
+    private static final class EmbeddedDisplayPolicyResult {
+        final boolean fixedToUserRotation;
+        final boolean ignoreOrientationRequest;
+        final boolean systemDecorationsRequestApplied;
+        final Boolean systemDecorationsShown;
+        final boolean transientBarsHideRequested;
+        final Boolean navigationBarPresent;
+
+        EmbeddedDisplayPolicyResult(boolean fixedToUserRotation,
+                                    boolean ignoreOrientationRequest,
+                                    boolean systemDecorationsRequestApplied,
+                                    Boolean systemDecorationsShown,
+                                    boolean transientBarsHideRequested,
+                                    Boolean navigationBarPresent) {
+            this.fixedToUserRotation = fixedToUserRotation;
+            this.ignoreOrientationRequest = ignoreOrientationRequest;
+            this.systemDecorationsRequestApplied = systemDecorationsRequestApplied;
+            this.systemDecorationsShown = systemDecorationsShown;
+            this.transientBarsHideRequested = transientBarsHideRequested;
+            this.navigationBarPresent = navigationBarPresent;
+        }
     }
 }

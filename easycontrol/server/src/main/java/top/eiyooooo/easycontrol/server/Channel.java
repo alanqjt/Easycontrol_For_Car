@@ -729,7 +729,8 @@ public class Channel {
         return jsonObjectResult;
     }
 
-    public VirtualDisplay createVirtualDisplay(int width, int height, int density) throws Exception {
+    public VirtualDisplay createVirtualDisplay(int width, int height, int density,
+                                               boolean embeddedDisplay) throws Exception {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
             throw new Exception("Virtual display is not supported before Android 11");
         Surface surface;
@@ -742,11 +743,14 @@ public class Channel {
         }
         if (surface == null) throw new Exception("Failed to create surface");
         android.hardware.display.DisplayManager displayManager = DisplayManager.class.getDeclaredConstructor(Context.class).newInstance(FakeContext.get());
-        int flags = getVirtualDisplayFlags();
+        int flags = getVirtualDisplayFlags(embeddedDisplay);
+        L.i("creating virtual display"
+                + ", embedded=" + embeddedDisplay
+                + ", flags=0x" + Integer.toHexString(flags));
         return displayManager.createVirtualDisplay("easycontrol_for_car", width, height, density, surface, flags);
     }
 
-    private static int getVirtualDisplayFlags() {
+    private static int getVirtualDisplayFlags(boolean embeddedDisplay) {
         int VIRTUAL_DISPLAY_FLAG_PUBLIC = 1;
         int VIRTUAL_DISPLAY_FLAG_PRESENTATION = 1 << 1;
         int VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY = 1 << 3;
@@ -757,7 +761,12 @@ public class Channel {
 
         int flags = VIRTUAL_DISPLAY_FLAG_PUBLIC | VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL | VIRTUAL_DISPLAY_FLAG_PRESENTATION;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            flags |= VIRTUAL_DISPLAY_FLAG_TRUSTED | VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP | VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED;
+            flags |= VIRTUAL_DISPLAY_FLAG_TRUSTED;
+            // 部分车机/手机组合会给独立显示组强制创建导航栏。内嵌模式改用默认显示组，
+            // 普通悬浮投屏继续保留原行为，避免影响已有的多窗口投屏。
+            if (!embeddedDisplay) {
+                flags |= VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP | VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED;
+            }
         }
         return flags;
     }

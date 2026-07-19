@@ -429,12 +429,30 @@ public class Client {
       changeMode(1);
       PublicTools.logToast(AppData.main.getString(R.string.tip_application_transfer));
     } catch (Exception e) {
+      boolean androidVersionUnsupported = isAndroidVersionUnsupported(e);
       Log.e(DISPLAY_LOG_TAG, "virtual display creation failed"
               + ", profile=" + (embeddedMode ? DISPLAY_PROFILE_EMBEDDED : DISPLAY_PROFILE_STANDARD)
-              + ", uuid=" + uuid, e);
+              + ", uuid=" + uuid
+              + ", failureType=" + (androidVersionUnsupported
+              ? "android-version-unsupported" : "transport-or-display"), e);
       changeMode(0);
-      PublicTools.logToast(AppData.main.getString(R.string.error_create_display));
+      PublicTools.logToast(AppData.main.getString(androidVersionUnsupported
+              ? R.string.error_create_display_android_version
+              : R.string.error_create_display));
     }
+  }
+
+  private static boolean isAndroidVersionUnsupported(Throwable error) {
+    Throwable current = error;
+    while (current != null) {
+      String message = current.getMessage();
+      if (message != null
+              && message.contains("Virtual display is not supported before Android 11")) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 
   private int createVirtualDisplay(Device device, VirtualDisplaySpec displaySpec,
