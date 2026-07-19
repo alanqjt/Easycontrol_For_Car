@@ -1,0 +1,47 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag to publish, for example 3.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create release and upload APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME}}"
+          APK="更新包/${VERSION}/EasyControl-Car-${VERSION}-release.apk"
+          NOTES="更新包/${VERSION}/README.md"
+
+          test -f "$APK"
+          test -f "$NOTES"
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release edit "$VERSION" \
+              --title "易控车机版 ${VERSION}" \
+              --notes-file "$NOTES"
+          else
+            gh release create "$VERSION" \
+              --title "易控车机版 ${VERSION}" \
+              --notes-file "$NOTES"
+          fi
+
+          gh release upload "$VERSION" "$APK" --clobber
