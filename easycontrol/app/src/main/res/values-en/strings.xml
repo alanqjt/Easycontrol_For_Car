@@ -274,6 +274,19 @@
   <!-- 设备列表展开 -->
   <string name="start_display_mirroring">Display mirroring</string>
   <string name="start_application_transfer">Application transfer</string>
+  <string name="start_music_navigation">Music + navigation</string>
+  <string name="music_navigation_title">Music and navigation</string>
+  <string name="music_navigation_detail">Navigation fills the remaining left area; music uses a fixed portrait mirror width on the right.</string>
+  <string name="music_navigation_navigation_app">Navigation app</string>
+  <string name="music_navigation_music_app">Music app</string>
+  <string name="music_navigation_select">Select app</string>
+  <string name="music_navigation_start">Start both</string>
+  <string name="music_navigation_loading_apps">Loading app list…</string>
+  <string name="music_navigation_apps_failed">Failed to load apps. Check the device connection.</string>
+  <string name="music_navigation_requires_embedded">Enable embedded projection mode first.</string>
+  <string name="music_navigation_device_unavailable">The device is currently unavailable.</string>
+  <string name="music_navigation_default_navigation">Amap</string>
+  <string name="music_navigation_default_music">QQ Music</string>
 
   <!-- Embedded projection -->
   <string name="embedded_projection_connecting">Connecting to device</string>

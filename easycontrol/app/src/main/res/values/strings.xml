@@ -274,6 +274,19 @@
   <!-- 设备列表展开 -->
   <string name="start_display_mirroring">屏幕镜像</string>
   <string name="start_application_transfer">应用流转</string>
+  <string name="start_music_navigation">音乐导航</string>
+  <string name="music_navigation_title">音乐导航双窗口</string>
+  <string name="music_navigation_detail">导航占左侧剩余区域，音乐按手机竖屏镜像宽度固定在右侧</string>
+  <string name="music_navigation_navigation_app">导航应用</string>
+  <string name="music_navigation_music_app">音乐应用</string>
+  <string name="music_navigation_select">选择应用</string>
+  <string name="music_navigation_start">同时启动</string>
+  <string name="music_navigation_loading_apps">正在读取应用列表…</string>
+  <string name="music_navigation_apps_failed">读取应用列表失败，请检查设备连接</string>
+  <string name="music_navigation_requires_embedded">请先开启内嵌投屏模式</string>
+  <string name="music_navigation_device_unavailable">设备当前不可连接</string>
+  <string name="music_navigation_default_navigation">高德地图</string>
+  <string name="music_navigation_default_music">QQ音乐</string>
 
   <!-- 内嵌投屏 -->
   <string name="embedded_projection_connecting">正在连接设备</string>

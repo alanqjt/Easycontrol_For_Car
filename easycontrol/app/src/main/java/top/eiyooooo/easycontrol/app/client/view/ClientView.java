@@ -92,7 +92,7 @@ public class ClientView implements TextureView.SurfaceTextureListener {
   }
 
   public void updateDevice() {
-    if (multiLink != 0) return;
+    if (multiLink != 0 || device.temporarySession || deviceOriginal.temporarySession) return;
     Device.copyDevice(device, deviceOriginal);
     AppData.dbHelper.update(device);
   }

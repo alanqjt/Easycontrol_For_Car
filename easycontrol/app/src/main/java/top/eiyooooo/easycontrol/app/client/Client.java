@@ -103,6 +103,8 @@ public class Client {
   public final ClientView clientView;
   public final String uuid;
   public final String sessionId = UUID.randomUUID().toString();
+  private final String serverSocketName = "easycontrol_for_car_scrcpy_"
+          + sessionId.substring(0, 8);
   public final boolean embeddedMode;
   private final boolean usbTransport;
   // 0 为屏幕镜像模式，1 为应用流转模式。
@@ -158,6 +160,49 @@ public class Client {
         synchronized (embeddedStartLock) {
           embeddedStartReserved = false;
         }
+      }
+    }
+  }
+
+  public static boolean startEmbeddedPair(
+          Device navigationDevice, Device musicDevice, UsbDevice usbDevice) {
+    if (!AppData.setting.getEmbeddedProjectionMode()) {
+      PublicTools.logToast(AppData.main.getString(R.string.music_navigation_requires_embedded));
+      return false;
+    }
+    synchronized (embeddedStartLock) {
+      if (embeddedStartReserved || hasActiveClients()) {
+        PublicTools.logToast(AppData.main.getString(R.string.error_embedded_single_session));
+        return false;
+      }
+      if (!MainActivity.isEmbeddedProjectionHostReady()) {
+        PublicTools.logToast(AppData.main.getString(R.string.error_embedded_host_unavailable));
+        return false;
+      }
+      embeddedStartReserved = true;
+    }
+
+    Client navigationClient = null;
+    try {
+      navigationDevice.embeddedSlot = Device.EMBEDDED_SLOT_LEFT;
+      musicDevice.embeddedSlot = Device.EMBEDDED_SLOT_RIGHT;
+      navigationDevice.temporarySession = true;
+      musicDevice.temporarySession = true;
+      navigationClient = new Client(navigationDevice, usbDevice, 1, true);
+      new Client(musicDevice, usbDevice, 1, true);
+      Log.i("EasycontrolEmbedded", "embedded music-navigation pair accepted"
+              + ", uuid=" + navigationDevice.uuid
+              + ", navigation=" + navigationDevice.specified_app
+              + ", music=" + musicDevice.specified_app);
+      return true;
+    } catch (RuntimeException e) {
+      Log.e("EasycontrolEmbedded", "embedded music-navigation pair start failed", e);
+      if (navigationClient != null) navigationClient.release(null);
+      PublicTools.logToast(AppData.main.getString(R.string.log_notify));
+      return false;
+    } finally {
+      synchronized (embeddedStartLock) {
+        embeddedStartReserved = false;
       }
     }
   }
@@ -285,6 +330,7 @@ public class Client {
     // 使用 Android 官方 app_process 常见的 CLASSPATH 形式。部分厂商 ROM 对
     // -Djava.class.path 的处理不稳定，会在类加载阶段直接 SIGABRT。
     cmd.append("CLASSPATH=").append(serverName).append(" app_process / top.eiyooooo.easycontrol.server.Scrcpy");
+    cmd.append(" socketName=").append(serverSocketName);
     boolean startAudio = shouldStartServerAudio(device);
     Log.i(AUDIO_LOG_TAG, "audio start decision " + audioClientDescription()
             + ", deviceAudio=" + device.isAudio
@@ -314,6 +360,7 @@ public class Client {
             + ", transport=" + (usbTransport ? "USB" : "WiFi")
             + ", mode=" + mode
             + ", embedded=" + embeddedMode
+            + ", socketName=" + serverSocketName
             + ", maxSize=" + device.maxSize
             + ", targetFps=" + device.maxFps
             + ", targetMbps=" + device.maxVideoBit
@@ -540,7 +587,7 @@ public class Client {
         hostSize = measuredHostSize;
         hostSizeSource = "embedded-layout";
       } else {
-        hostSize = MainActivity.getEmbeddedProjectionTargetSize();
+        hostSize = MainActivity.getEmbeddedProjectionTargetSize(device.embeddedSlot);
         hostSizeSource = "main-window-fallback";
       }
       int hostDensityDpi = MainActivity.getEmbeddedProjectionTargetDensityDpi();
@@ -553,8 +600,12 @@ public class Client {
       if (rawHostRatio < 0.25f || rawHostRatio > 4f) return null;
       // 高德等车载布局在接近方形的虚拟屏上会切换到窄屏布局并裁掉右侧区域。
       // 分屏时保留至少 16:9 的逻辑画布，再由 TextureView 等比完整放入宿主。
-      float targetRatio = Math.max(rawHostRatio, EMBEDDED_FLOW_MIN_ASPECT_RATIO);
-      String ratioPolicy = rawHostRatio < EMBEDDED_FLOW_MIN_ASPECT_RATIO
+      boolean portraitMusicSlot = device.embeddedSlot == Device.EMBEDDED_SLOT_RIGHT;
+      float targetRatio = portraitMusicSlot
+              ? rawHostRatio : Math.max(rawHostRatio, EMBEDDED_FLOW_MIN_ASPECT_RATIO);
+      String ratioPolicy = portraitMusicSlot
+              ? "follow-music-host"
+              : rawHostRatio < EMBEDDED_FLOW_MIN_ASPECT_RATIO
               ? "minimum-16:9-fit-center" : "follow-host";
       int longEdge = Math.max(sourceWidth, sourceHeight);
       int width;
@@ -919,9 +970,9 @@ public class Client {
         BufferStream controlStream = null;
         BufferStream pendingVideoStream = null;
         try {
-          controlStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
+          controlStream = adb.localSocketForward(serverSocketName);
           pendingVideoStream = (pendingVideoAdb == null ? adb : pendingVideoAdb)
-                  .localSocketForward("easycontrol_for_car_scrcpy");
+                  .localSocketForward(serverSocketName);
           synchronized (lifecycleLock) {
             if (releaseStarted.get()) {
               throw new InterruptedException("client released while connecting");
@@ -933,6 +984,7 @@ public class Client {
           }
           pendingVideoAdb = null;
           L.log(uuid, "scrcpy sockets connected, attempt=" + (i + 1)
+                  + ", socketName=" + serverSocketName
                   + ", transport=" + (usbTransport ? "USB shared" : "WiFi split"));
           return;
         } catch (Exception ignored) {
@@ -1119,7 +1171,7 @@ public class Client {
     }
     if (error != null) {
       PublicTools.logToast(error);
-      if (AppData.setting.getShowReconnect())
+      if (AppData.setting.getShowReconnect() && !clientView.deviceOriginal.temporarySession)
         AppData.uiHandler.postDelayed(() -> AppData.myBroadcastReceiver.handleReconnect(clientView.deviceOriginal, mode), 500);
     }
     for (int i = 0; i < 7; i++) {

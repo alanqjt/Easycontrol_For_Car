@@ -3,6 +3,7 @@ package top.eiyooooo.easycontrol.server.entity;
 import android.os.Build;
 
 public final class Options {
+    public static String socketName = "easycontrol_for_car_scrcpy";
     public static boolean isAudio = true;
     public static int maxSize = 1600;
     public static int maxVideoBit = 4000000;
@@ -34,6 +35,12 @@ public final class Options {
             String key = arg.substring(0, equalIndex);
             String value = arg.substring(equalIndex + 1);
             switch (key) {
+                case "socketName":
+                    if (!value.matches("[A-Za-z0-9_.-]{1,80}")) {
+                        throw new IllegalArgumentException("socketName 参数非法");
+                    }
+                    socketName = value;
+                    break;
                 case "isAudio":
                     isAudio = Integer.parseInt(value) == 1;
                     break;

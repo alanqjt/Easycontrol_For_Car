@@ -3,6 +3,9 @@ package top.eiyooooo.easycontrol.app.entity;
 public class Device {
   public static final int TYPE_NORMAL = 1;
   public static final int TYPE_LINK = 2;
+  public static final int EMBEDDED_SLOT_FULL = 0;
+  public static final int EMBEDDED_SLOT_LEFT = 1;
+  public static final int EMBEDDED_SLOT_RIGHT = 2;
 
   public final String uuid;
   public final int type;
@@ -47,6 +50,9 @@ public class Device {
   public int mini_y;
   public static int MINI_Y =200;
   public int connection = -1; // -1:未检查连接 0:检查连接中 1:可以连接 2:无法连接
+  // 仅用于当前投屏会话，不写入数据库。
+  public int embeddedSlot = EMBEDDED_SLOT_FULL;
+  public boolean temporarySession;
 
   public Device(String uuid,
                 int type,
@@ -150,6 +156,9 @@ public class Device {
     target.small_free_width = source.small_free_width;
     target.small_free_height = source.small_free_height;
     target.mini_y = source.mini_y;
+    target.connection = source.connection;
+    target.embeddedSlot = source.embeddedSlot;
+    target.temporarySession = source.temporarySession;
   }
 
   public static Device getDefaultDevice(String uuid, int type) {

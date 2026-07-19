@@ -47,6 +47,7 @@ public final class Scrcpy {
             // 先解析参数，再尽快绑定 socket；厂商兼容初始化放到连接建立之后。
             Options.parse(args);
             L.i("scrcpy stage=options-parsed, displayId=" + Options.displayId
+                    + ", socketName=" + Options.socketName
                     + ", mirrorMode=" + Options.mirrorMode
                     + ", audio=" + Options.isAudio
                     + ", audioProtocol=" + Options.audioProtocol
@@ -135,10 +136,10 @@ public final class Scrcpy {
 
     private static void connectClient() throws IOException {
         // 使用本地 socket 连接 app 端发起的客户端。
-        try (LocalServerSocket serverSocket = new LocalServerSocket("easycontrol_for_car_scrcpy")) {
-            L.i("scrcpy stage=main-socket-accept");
+        try (LocalServerSocket serverSocket = new LocalServerSocket(Options.socketName)) {
+            L.i("scrcpy stage=main-socket-accept, socketName=" + Options.socketName);
             mainSocket = serverSocket.accept();
-            L.i("scrcpy stage=video-socket-accept");
+            L.i("scrcpy stage=video-socket-accept, socketName=" + Options.socketName);
             videoSocket = serverSocket.accept();
             mainFD = mainSocket.getFileDescriptor();
             videoFD = videoSocket.getFileDescriptor();

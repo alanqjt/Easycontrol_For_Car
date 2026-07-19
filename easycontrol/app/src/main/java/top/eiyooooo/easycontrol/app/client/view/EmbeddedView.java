@@ -49,16 +49,17 @@ public final class EmbeddedView {
     binding.buttonToolbarToggle.setVisibility(View.GONE);
     binding.toolbarContainer.setVisibility(View.GONE);
     binding.navBar.setVisibility(View.GONE);
-    MainActivity.attachEmbeddedProjection(binding.getRoot());
+    MainActivity.attachEmbeddedProjection(binding.getRoot(), clientView.device.embeddedSlot);
     // 连接线程创建虚拟屏前先记录真实宿主尺寸，避免分屏启动时误用整窗回退值。
     binding.getRoot().post(this::updateMaxSize);
     binding.getRoot().postDelayed(this::updateMaxSize, 250);
-    Log.i(TAG, "embedded loading attached uuid=" + clientView.device.uuid);
+    Log.i(TAG, "embedded loading attached uuid=" + clientView.device.uuid
+            + ", slot=" + clientView.device.embeddedSlot);
   }
 
   public void show() {
     ready = true;
-    MainActivity.attachEmbeddedProjection(binding.getRoot());
+    MainActivity.attachEmbeddedProjection(binding.getRoot(), clientView.device.embeddedSlot);
     binding.loadingGroup.setVisibility(View.GONE);
     binding.buttonToolbarToggle.setVisibility(View.VISIBLE);
     updateToolbarVisibility();
@@ -67,7 +68,8 @@ public final class EmbeddedView {
     binding.editText.requestFocus();
     binding.getRoot().post(this::updateMaxSize);
     Log.i(TAG, "embedded projection shown uuid=" + clientView.device.uuid
-            + ", mode=" + clientView.mode);
+            + ", mode=" + clientView.mode
+            + ", slot=" + clientView.device.embeddedSlot);
   }
 
   public void restore(boolean streamReady) {
@@ -118,6 +120,7 @@ public final class EmbeddedView {
     Log.i(TAG, "embedded host resized uuid=" + clientView.device.uuid
             + ", width=" + width + ", height=" + height
             + ", mode=" + mode + ", ready=" + ready
+            + ", slot=" + clientView.device.embeddedSlot
             + ", scale=fit-center, runtimeDisplayResize=true");
   }
 

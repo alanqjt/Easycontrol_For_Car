@@ -7,6 +7,7 @@ import android.app.Dialog;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.hardware.usb.UsbDevice;
 import android.os.Build;
 import android.view.LayoutInflater;
@@ -25,6 +26,7 @@ import top.eiyooooo.easycontrol.app.R;
 import top.eiyooooo.easycontrol.app.StartDeviceActivity;
 import top.eiyooooo.easycontrol.app.adb.Adb;
 import top.eiyooooo.easycontrol.app.client.Client;
+import top.eiyooooo.easycontrol.app.databinding.DialogMusicNavigationBinding;
 import top.eiyooooo.easycontrol.app.databinding.ItemDeviceCardBinding;
 import top.eiyooooo.easycontrol.app.databinding.ItemSetDeviceBinding;
 import top.eiyooooo.easycontrol.app.entity.AppData;
@@ -34,6 +36,12 @@ import top.eiyooooo.easycontrol.app.entity.Device;
  * 设备卡片网格渲染器：按应用当前可用宽度自适应，兼容整屏和系统分屏。
  */
 public class DeviceListAdapter {
+
+  private static final String MUSIC_NAVIGATION_PREFS = "music_navigation_apps";
+  private static final String KEY_NAVIGATION_PACKAGE = "navigation_package_";
+  private static final String KEY_MUSIC_PACKAGE = "music_package_";
+  private static final String DEFAULT_NAVIGATION_PACKAGE = "com.autonavi.minimap";
+  private static final String DEFAULT_MUSIC_PACKAGE = "com.tencent.qqmusic";
 
   public static final ArrayList<Device> devicesList = new ArrayList<>();
   public static final ConcurrentHashMap<String, UsbDevice> linkDevices = new ConcurrentHashMap<>();
@@ -216,6 +224,128 @@ public class DeviceListAdapter {
 
     binding.displayMirroring.setOnClickListener(v -> startDevice(device, 0));
     binding.createDisplay.setOnClickListener(v -> startDevice(device, 1));
+    boolean embeddedMode = AppData.setting.getEmbeddedProjectionMode();
+    binding.musicNavigation.setVisibility(embeddedMode ? View.VISIBLE : View.GONE);
+    binding.musicNavigation.setOnClickListener(v -> showMusicNavigationDialog(device));
+  }
+
+  private void showMusicNavigationDialog(Device device) {
+    if (!AppData.setting.getEmbeddedProjectionMode()) {
+      Toast.makeText(context, R.string.music_navigation_requires_embedded, Toast.LENGTH_SHORT).show();
+      return;
+    }
+    UsbDevice usbDevice = device.isLinkDevice() ? linkDevices.get(device.uuid) : null;
+    if (device.isLinkDevice() && usbDevice == null) {
+      Toast.makeText(context, R.string.music_navigation_device_unavailable, Toast.LENGTH_SHORT).show();
+      return;
+    }
+
+    DialogMusicNavigationBinding binding = DialogMusicNavigationBinding.inflate(
+            LayoutInflater.from(context));
+    SharedPreferences preferences = context.getSharedPreferences(
+            MUSIC_NAVIGATION_PREFS, Context.MODE_PRIVATE);
+    String navigationPackage = preferences.getString(
+            KEY_NAVIGATION_PACKAGE + device.uuid, DEFAULT_NAVIGATION_PACKAGE);
+    String musicPackage = preferences.getString(
+            KEY_MUSIC_PACKAGE + device.uuid, DEFAULT_MUSIC_PACKAGE);
+    binding.navigationAppPackage.setText(navigationPackage);
+    binding.musicAppPackage.setText(musicPackage);
+    binding.navigationAppName.setText(getAppLabel(navigationPackage));
+    binding.musicAppName.setText(getAppLabel(musicPackage));
+
+    Dialog dialog = PublicTools.createDialog(context, true, binding.getRoot(), 760);
+    binding.buttonCancel.setOnClickListener(v -> dialog.cancel());
+    binding.selectNavigationApp.setOnClickListener(v -> selectRemoteApp(
+            device, usbDevice, binding.selectNavigationApp,
+            (label, packageName) -> {
+              binding.navigationAppName.setText(label);
+              binding.navigationAppPackage.setText(packageName);
+            }));
+    binding.selectMusicApp.setOnClickListener(v -> selectRemoteApp(
+            device, usbDevice, binding.selectMusicApp,
+            (label, packageName) -> {
+              binding.musicAppName.setText(label);
+              binding.musicAppPackage.setText(packageName);
+            }));
+    binding.buttonStart.setOnClickListener(v -> {
+      String selectedNavigation = String.valueOf(binding.navigationAppPackage.getText()).trim();
+      String selectedMusic = String.valueOf(binding.musicAppPackage.getText()).trim();
+      if (selectedNavigation.isEmpty() || selectedMusic.isEmpty()) return;
+
+      Device navigationDevice = createTemporaryFlowDevice(
+              device, selectedNavigation, Device.EMBEDDED_SLOT_LEFT);
+      Device musicDevice = createTemporaryFlowDevice(
+              device, selectedMusic, Device.EMBEDDED_SLOT_RIGHT);
+      if (!Client.startEmbeddedPair(navigationDevice, musicDevice, usbDevice)) return;
+
+      preferences.edit()
+              .putString(KEY_NAVIGATION_PACKAGE + device.uuid, selectedNavigation)
+              .putString(KEY_MUSIC_PACKAGE + device.uuid, selectedMusic)
+              .apply();
+      dialog.cancel();
+    });
+    dialog.show();
+  }
+
+  private Device createTemporaryFlowDevice(Device source, String packageName, int slot) {
+    Device target = new Device(source.uuid, source.type);
+    Device.copyDevice(source, target);
+    target.specified_app = packageName;
+    target.defaultFull = false;
+    target.connectOnStart = false;
+    target.embeddedSlot = slot;
+    target.temporarySession = true;
+    return target;
+  }
+
+  private String getAppLabel(String packageName) {
+    if (DEFAULT_NAVIGATION_PACKAGE.equals(packageName)) {
+      return context.getString(R.string.music_navigation_default_navigation);
+    }
+    if (DEFAULT_MUSIC_PACKAGE.equals(packageName)) {
+      return context.getString(R.string.music_navigation_default_music);
+    }
+    return packageName;
+  }
+
+  private void selectRemoteApp(
+          Device device,
+          UsbDevice usbDevice,
+          View trigger,
+          AppSelectionHandler selectionHandler) {
+    trigger.setEnabled(false);
+    Toast.makeText(context, R.string.music_navigation_loading_apps, Toast.LENGTH_SHORT).show();
+    new Thread(() -> {
+      ArrayList<String> remoteApps = Client.getAppList(device, usbDevice);
+      AppData.uiHandler.post(() -> {
+        trigger.setEnabled(true);
+        if (remoteApps.isEmpty()) {
+          Toast.makeText(context, R.string.music_navigation_apps_failed, Toast.LENGTH_SHORT).show();
+          return;
+        }
+        String[] appItems = new String[remoteApps.size()];
+        String[] appLabels = new String[remoteApps.size()];
+        String[] appPackages = new String[remoteApps.size()];
+        for (int index = 0; index < remoteApps.size(); index++) {
+          String remoteApp = remoteApps.get(index);
+          int separator = remoteApp.lastIndexOf('@');
+          String label = separator > 0 ? remoteApp.substring(0, separator) : remoteApp;
+          String packageName = separator > 0 ? remoteApp.substring(separator + 1) : remoteApp;
+          appLabels[index] = label;
+          appPackages[index] = packageName;
+          appItems[index] = label + "\n" + packageName;
+        }
+        new AlertDialog.Builder(context)
+                .setTitle(R.string.music_navigation_select)
+                .setItems(appItems, (selectDialog, which) -> selectionHandler.onSelected(
+                        appLabels[which], appPackages[which]))
+                .show();
+      });
+    }, "music-navigation-app-list").start();
+  }
+
+  private interface AppSelectionHandler {
+    void onSelected(String label, String packageName);
   }
 
   private void checkConnection(Device device) {

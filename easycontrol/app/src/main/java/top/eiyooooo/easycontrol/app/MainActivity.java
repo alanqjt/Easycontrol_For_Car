@@ -17,6 +17,7 @@ import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
@@ -38,6 +39,8 @@ import top.eiyooooo.easycontrol.app.helper.SettingsPanelHelper;
 
 public class MainActivity extends Activity {
   private static final String EMBEDDED_LOG_TAG = "EasycontrolEmbedded";
+  private static final float EMBEDDED_MUSIC_MIRROR_ASPECT_RATIO = 9f / 20f;
+  private static final float EMBEDDED_MUSIC_MAX_WIDTH_RATIO = 0.40f;
   public static final String EXTRA_EMBEDDED_START_UUID = "embeddedStartUuid";
   public static final String EXTRA_EMBEDDED_START_MODE = "embeddedStartMode";
   public static final String EXTRA_EMBEDDED_START_DEFAULT = "embeddedStartDefault";
@@ -53,6 +56,10 @@ public class MainActivity extends Activity {
   private boolean appStarted;
   private Boolean compactHeader;
   private View embeddedProjectionRoot;
+  private final View[] embeddedProjectionPairRoots = new View[2];
+  private LinearLayout embeddedProjectionPairContainer;
+  private FrameLayout embeddedProjectionLeftHost;
+  private FrameLayout embeddedProjectionRightHost;
   private boolean syncingEmbeddedProjectionModeSwitch;
   private int rootPaddingStart;
   private int rootPaddingTop;
@@ -155,7 +162,7 @@ public class MainActivity extends Activity {
     AppData.myBroadcastReceiver.setDeviceListAdapter(null);
     AppData.myBroadcastReceiver.setConnectHelper(null);
     ConnectHelper.status = false;
-    detachEmbeddedProjectionInternal(embeddedProjectionRoot);
+    detachAllEmbeddedProjectionsInternal();
     if (activeInstance == this) activeInstance = null;
     if (!isChangingConfigurations()) Client.releaseEmbeddedSessions();
     super.onDestroy();
@@ -328,6 +335,7 @@ public class MainActivity extends Activity {
     AppData.setting.setEmbeddedProjectionMode(enabled);
     if (enabled) AppData.setting.setAlwaysFullMode(false);
     syncEmbeddedProjectionModeSwitch();
+    if (deviceListAdapter != null) deviceListAdapter.render();
 
     if (!enabled && !AppData.setting.getAlwaysFullMode() && !haveOverlayPermission()) {
       createAlert();
@@ -363,15 +371,35 @@ public class MainActivity extends Activity {
   }
 
   public static Pair<Integer, Integer> getEmbeddedProjectionTargetSize() {
+    return getEmbeddedProjectionTargetSize(Device.EMBEDDED_SLOT_FULL);
+  }
+
+  public static Pair<Integer, Integer> getEmbeddedProjectionTargetSize(int slot) {
     MainActivity activity = activeInstance;
     if (!isEmbeddedProjectionHostReady()) return null;
-    int width = activity.mainActivity.getRoot().getWidth();
-    int height = activity.mainActivity.getRoot().getHeight();
+    int width = activity.mainActivity.embeddedProjectionHost.getWidth();
+    int height = activity.mainActivity.embeddedProjectionHost.getHeight();
+    if (width <= 0 || height <= 0) {
+      width = activity.mainActivity.getRoot().getWidth();
+      height = activity.mainActivity.getRoot().getHeight();
+    }
     if (AppData.setting.getDefaultShowNavBar()) {
       height -= PublicTools.dp2px(42f);
     }
     if (width <= 0 || height <= 0) return null;
+    if (slot == Device.EMBEDDED_SLOT_LEFT || slot == Device.EMBEDDED_SLOT_RIGHT) {
+      int musicWidth = calculateEmbeddedMusicWidth(width, height);
+      width = slot == Device.EMBEDDED_SLOT_RIGHT ? musicWidth : width - musicWidth;
+    }
+    if (width <= 0) return null;
     return new Pair<>(width, height);
+  }
+
+  private static int calculateEmbeddedMusicWidth(int totalWidth, int totalHeight) {
+    int desiredWidth = Math.round(totalHeight * EMBEDDED_MUSIC_MIRROR_ASPECT_RATIO);
+    int maxWidth = Math.round(totalWidth * EMBEDDED_MUSIC_MAX_WIDTH_RATIO);
+    int musicWidth = Math.min(desiredWidth, maxWidth);
+    return Math.max(1, Math.min(totalWidth - 1, musicWidth));
   }
 
   public static Rect getMainWindowBoundsOnScreen() {
@@ -408,12 +436,16 @@ public class MainActivity extends Activity {
   }
 
   public static boolean attachEmbeddedProjection(View root) {
+    return attachEmbeddedProjection(root, Device.EMBEDDED_SLOT_FULL);
+  }
+
+  public static boolean attachEmbeddedProjection(View root, int slot) {
     MainActivity activity = activeInstance;
     if (!isEmbeddedProjectionHostReady() || root == null) {
       Log.w(EMBEDDED_LOG_TAG, "embedded host attach skipped: host unavailable");
       return false;
     }
-    activity.runOnUiThread(() -> activity.attachEmbeddedProjectionInternal(root));
+    activity.runOnUiThread(() -> activity.attachEmbeddedProjectionInternal(root, slot));
     return true;
   }
 
@@ -423,23 +455,23 @@ public class MainActivity extends Activity {
     activity.runOnUiThread(() -> activity.detachEmbeddedProjectionInternal(root));
   }
 
-  private void attachEmbeddedProjectionInternal(View root) {
+  private void attachEmbeddedProjectionInternal(View root, int slot) {
     if (mainActivity == null || isFinishing()) return;
+    if (slot == Device.EMBEDDED_SLOT_LEFT || slot == Device.EMBEDDED_SLOT_RIGHT) {
+      attachEmbeddedPairRoot(root, slot);
+      return;
+    }
     if (embeddedProjectionRoot == root && root.getParent() == mainActivity.embeddedProjectionHost) {
       setEmbeddedProjectionLayout(true);
       mainActivity.devicesList.setVisibility(View.GONE);
       mainActivity.embeddedProjectionHost.setVisibility(View.VISIBLE);
       return;
     }
-    if (root.getParent() instanceof ViewGroup) {
-      ((ViewGroup) root.getParent()).removeView(root);
-    }
-    if (embeddedProjectionRoot != null && embeddedProjectionRoot != root
-            && embeddedProjectionRoot.getParent() instanceof ViewGroup) {
-      ((ViewGroup) embeddedProjectionRoot.getParent()).removeView(embeddedProjectionRoot);
-    }
+    removeFromParent(root);
+    removeFromParent(embeddedProjectionRoot);
+    clearEmbeddedPairContainer();
     mainActivity.embeddedProjectionHost.removeAllViews();
-    mainActivity.embeddedProjectionHost.addView(root, new android.widget.FrameLayout.LayoutParams(
+    mainActivity.embeddedProjectionHost.addView(root, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
     ));
@@ -450,19 +482,117 @@ public class MainActivity extends Activity {
     Log.i(EMBEDDED_LOG_TAG, "embedded root attached fullscreen to main activity");
   }
 
+  private void attachEmbeddedPairRoot(View root, int slot) {
+    int index = slot == Device.EMBEDDED_SLOT_LEFT ? 0 : 1;
+    removeFromParent(root);
+    removeFromParent(embeddedProjectionRoot);
+    embeddedProjectionRoot = null;
+    ensureEmbeddedPairContainer();
+
+    View previous = embeddedProjectionPairRoots[index];
+    if (previous != root) removeFromParent(previous);
+    FrameLayout targetHost = index == 0 ? embeddedProjectionLeftHost : embeddedProjectionRightHost;
+    targetHost.removeAllViews();
+    targetHost.addView(root, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT));
+    embeddedProjectionPairRoots[index] = root;
+    updateEmbeddedPairLayout();
+    setEmbeddedProjectionLayout(true);
+    mainActivity.devicesList.setVisibility(View.GONE);
+    mainActivity.embeddedProjectionHost.setVisibility(View.VISIBLE);
+    Log.i(EMBEDDED_LOG_TAG, "embedded pair root attached, slot=" + slot);
+  }
+
+  private void ensureEmbeddedPairContainer() {
+    if (embeddedProjectionPairContainer != null
+            && embeddedProjectionPairContainer.getParent() == mainActivity.embeddedProjectionHost) return;
+    mainActivity.embeddedProjectionHost.removeAllViews();
+    embeddedProjectionPairContainer = new LinearLayout(this);
+    embeddedProjectionPairContainer.setOrientation(LinearLayout.HORIZONTAL);
+    embeddedProjectionLeftHost = new FrameLayout(this);
+    embeddedProjectionRightHost = new FrameLayout(this);
+    embeddedProjectionPairContainer.addView(embeddedProjectionLeftHost,
+            new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+    embeddedProjectionPairContainer.addView(embeddedProjectionRightHost,
+            new LinearLayout.LayoutParams(1, ViewGroup.LayoutParams.MATCH_PARENT));
+    embeddedProjectionPairContainer.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                                                oldLeft, oldTop, oldRight, oldBottom) -> {
+      if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+        updateEmbeddedPairLayout();
+      }
+    });
+    mainActivity.embeddedProjectionHost.addView(embeddedProjectionPairContainer,
+            new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+  }
+
+  private void updateEmbeddedPairLayout() {
+    if (embeddedProjectionPairContainer == null || embeddedProjectionRightHost == null) return;
+    int width = embeddedProjectionPairContainer.getWidth();
+    int height = embeddedProjectionPairContainer.getHeight();
+    if (width <= 1 || height <= 0) {
+      Pair<Integer, Integer> target = getEmbeddedProjectionTargetSize(Device.EMBEDDED_SLOT_FULL);
+      if (target == null) return;
+      width = target.first;
+      height = target.second;
+    }
+    int musicWidth = calculateEmbeddedMusicWidth(width, height);
+    ViewGroup.LayoutParams current = embeddedProjectionRightHost.getLayoutParams();
+    if (current != null && current.width == musicWidth) return;
+    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            musicWidth, ViewGroup.LayoutParams.MATCH_PARENT);
+    embeddedProjectionRightHost.setLayoutParams(params);
+    Log.i(EMBEDDED_LOG_TAG, "embedded pair layout navigationWidth=" + (width - musicWidth)
+            + ", musicWidth=" + musicWidth + ", height=" + height);
+  }
+
   private void detachEmbeddedProjectionInternal(View root) {
     if (root == null) return;
-    if (root.getParent() instanceof ViewGroup) {
-      ((ViewGroup) root.getParent()).removeView(root);
-    }
+    removeFromParent(root);
     if (embeddedProjectionRoot == root) embeddedProjectionRoot = null;
-    if (mainActivity != null && embeddedProjectionRoot == null) {
+    for (int i = 0; i < embeddedProjectionPairRoots.length; i++) {
+      if (embeddedProjectionPairRoots[i] == root) embeddedProjectionPairRoots[i] = null;
+    }
+    if (mainActivity != null && !hasEmbeddedProjection()) {
+      clearEmbeddedPairContainer();
       mainActivity.embeddedProjectionHost.removeAllViews();
       mainActivity.embeddedProjectionHost.setVisibility(View.GONE);
       mainActivity.devicesList.setVisibility(View.VISIBLE);
       setEmbeddedProjectionLayout(false);
     }
     Log.i(EMBEDDED_LOG_TAG, "embedded root detached from main activity");
+  }
+
+  private void detachAllEmbeddedProjectionsInternal() {
+    removeFromParent(embeddedProjectionRoot);
+    embeddedProjectionRoot = null;
+    clearEmbeddedPairContainer();
+    if (mainActivity != null) mainActivity.embeddedProjectionHost.removeAllViews();
+  }
+
+  private void clearEmbeddedPairContainer() {
+    for (int i = 0; i < embeddedProjectionPairRoots.length; i++) {
+      removeFromParent(embeddedProjectionPairRoots[i]);
+      embeddedProjectionPairRoots[i] = null;
+    }
+    removeFromParent(embeddedProjectionPairContainer);
+    embeddedProjectionPairContainer = null;
+    embeddedProjectionLeftHost = null;
+    embeddedProjectionRightHost = null;
+  }
+
+  private boolean hasEmbeddedProjection() {
+    return embeddedProjectionRoot != null
+            || embeddedProjectionPairRoots[0] != null
+            || embeddedProjectionPairRoots[1] != null;
+  }
+
+  private static void removeFromParent(View view) {
+    if (view != null && view.getParent() instanceof ViewGroup) {
+      ((ViewGroup) view.getParent()).removeView(view);
+    }
   }
 
   private void rememberMainLayoutPadding() {
@@ -498,7 +628,6 @@ public class MainActivity extends Activity {
     for (Client client : Client.allClient) {
       if (!client.isClosed() && client.clientView.isEmbeddedMode()) {
         client.clientView.restoreEmbedded(client.isStarted());
-        return;
       }
     }
   }
