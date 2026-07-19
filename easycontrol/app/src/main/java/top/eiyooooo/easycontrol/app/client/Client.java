@@ -871,8 +871,27 @@ public class Client {
           }
           if (appTaskId == 0) {
             // 应用还没在前台时，直接拉起到目标显示器。
-            String output = Adb.getStringResponseFromServer(device, "openAppByPackage", "package=" + device.specified_app, "displayId=" + displayId);
-            if (output.contains("failed")) throw new Exception("");
+            ArrayList<String> parameters = new ArrayList<>();
+            parameters.add("package=" + device.specified_app);
+            parameters.add("displayId=" + displayId);
+            boolean forceLandscape = embeddedMode
+                    && device.embeddedSlot == Device.EMBEDDED_SLOT_LEFT;
+            if (forceLandscape) parameters.add("forceLandscape=1");
+            String output = Adb.getStringResponseFromServer(
+                    device, "openAppByPackage", parameters.toArray(new String[0]));
+            Log.i(DISPLAY_LOG_TAG, "flow app opened"
+                    + ", package=" + device.specified_app
+                    + ", displayId=" + displayId
+                    + ", forceLandscape=" + forceLandscape
+                    + ", response=" + output);
+            if (forceLandscape && output.contains("orientationOverride=true")) {
+              synchronized (lifecycleLock) {
+                embeddedOrientationPackageName = device.specified_app;
+              }
+            }
+            if (!output.contains("success") || output.contains("failed")) {
+              throw new Exception(output);
+            }
           } else {
             // 从最近任务正式启动到目标显示器，让应用收到目标屏尺寸和 DPI 配置。
             moveFlowTaskToDisplay(device, appTaskId, device.specified_app);

@@ -14,6 +14,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Log;
 import android.util.Pair;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -60,6 +61,7 @@ public class MainActivity extends Activity {
   private LinearLayout embeddedProjectionPairContainer;
   private FrameLayout embeddedProjectionLeftHost;
   private FrameLayout embeddedProjectionRightHost;
+  private View embeddedProjectionPairCloseAll;
   private boolean syncingEmbeddedProjectionModeSwitch;
   private int rootPaddingStart;
   private int rootPaddingTop;
@@ -307,12 +309,12 @@ public class MainActivity extends Activity {
       return;
     }
 
-    mainActivity.buttonCloseAllProjections.setEnabled(false);
+    setCloseAllProjectionButtonsEnabled(false);
     new Thread(() -> {
       int releasedCount = Client.releaseAll();
       AppData.uiHandler.post(() -> {
         if (isFinishing() || isDestroyed()) return;
-        mainActivity.buttonCloseAllProjections.setEnabled(true);
+        setCloseAllProjectionButtonsEnabled(true);
         int message = releasedCount == 0
                 ? R.string.main_no_active_projection
                 : R.string.main_close_all_complete;
@@ -321,6 +323,14 @@ public class MainActivity extends Activity {
                 Toast.LENGTH_SHORT).show();
       });
     }, "easycontrol_release_all").start();
+  }
+
+  private void setCloseAllProjectionButtonsEnabled(boolean enabled) {
+    if (mainActivity != null) mainActivity.buttonCloseAllProjections.setEnabled(enabled);
+    if (embeddedProjectionPairCloseAll != null) {
+      embeddedProjectionPairCloseAll.setEnabled(enabled);
+      embeddedProjectionPairCloseAll.setAlpha(enabled ? 1f : 0.55f);
+    }
   }
 
   private void toggleEmbeddedProjectionMode() {
@@ -498,6 +508,7 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT));
     embeddedProjectionPairRoots[index] = root;
     updateEmbeddedPairLayout();
+    updateEmbeddedPairCloseAllVisibility();
     setEmbeddedProjectionLayout(true);
     mainActivity.devicesList.setVisibility(View.GONE);
     mainActivity.embeddedProjectionHost.setVisibility(View.VISIBLE);
@@ -526,6 +537,27 @@ public class MainActivity extends Activity {
             new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
+
+    embeddedProjectionPairCloseAll = LayoutInflater.from(this).inflate(
+            R.layout.view_embedded_pair_controls,
+            mainActivity.embeddedProjectionHost,
+            false);
+    embeddedProjectionPairCloseAll.setOnClickListener(v -> closeAllProjections());
+    FrameLayout.LayoutParams closeAllParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+    closeAllParams.topMargin = PublicTools.dp2px(10f);
+    mainActivity.embeddedProjectionHost.addView(embeddedProjectionPairCloseAll, closeAllParams);
+    updateEmbeddedPairCloseAllVisibility();
+  }
+
+  private void updateEmbeddedPairCloseAllVisibility() {
+    if (embeddedProjectionPairCloseAll == null) return;
+    boolean pairReady = embeddedProjectionPairRoots[0] != null
+            && embeddedProjectionPairRoots[1] != null;
+    embeddedProjectionPairCloseAll.setVisibility(pairReady ? View.VISIBLE : View.GONE);
+    if (pairReady) embeddedProjectionPairCloseAll.bringToFront();
   }
 
   private void updateEmbeddedPairLayout() {
@@ -555,6 +587,7 @@ public class MainActivity extends Activity {
     for (int i = 0; i < embeddedProjectionPairRoots.length; i++) {
       if (embeddedProjectionPairRoots[i] == root) embeddedProjectionPairRoots[i] = null;
     }
+    updateEmbeddedPairCloseAllVisibility();
     if (mainActivity != null && !hasEmbeddedProjection()) {
       clearEmbeddedPairContainer();
       mainActivity.embeddedProjectionHost.removeAllViews();
@@ -577,7 +610,9 @@ public class MainActivity extends Activity {
       removeFromParent(embeddedProjectionPairRoots[i]);
       embeddedProjectionPairRoots[i] = null;
     }
+    removeFromParent(embeddedProjectionPairCloseAll);
     removeFromParent(embeddedProjectionPairContainer);
+    embeddedProjectionPairCloseAll = null;
     embeddedProjectionPairContainer = null;
     embeddedProjectionLeftHost = null;
     embeddedProjectionRightHost = null;

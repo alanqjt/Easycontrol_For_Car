@@ -375,17 +375,28 @@ public class Server {
                     String packageName = request.get("package");
                     String activity = request.get("activity");
                     String id = request.get("displayId");
+                    boolean forceLandscape = "1".equals(request.get("forceLandscape"));
 
                     if (packageName == null) throw new Exception("parameter 'package' not found");
                     if (activity == null) activity = channel.getAppMainActivity(packageName);
                     if (id == null) id = "0";
 
                     int displayId = Integer.parseInt(id);
+                    boolean orientationOverrideApplied = false;
+                    if (forceLandscape) {
+                        // 首次启动前就让 Activity 跟随横向虚拟屏，避免系统套用竖屏兼容信箱。
+                        orientationOverrideApplied = Channel.setUserOrientationOverride(packageName, true);
+                        L.i("open app orientation policy"
+                                + ", package=" + packageName
+                                + ", displayId=" + displayId
+                                + ", forceLandscape=true"
+                                + ", applied=" + orientationOverrideApplied);
+                    }
                     String error = channel.openApp(packageName, activity, displayId);
                     if (error != null) throw new Exception(error);
                     applyEmbeddedDisplayPolicy(displayId, "open-app");
                     scheduleEmbeddedDisplayPolicyRefresh(displayId, "open-app");
-                    postResponse("success");
+                    postResponse("success,orientationOverride=" + orientationOverrideApplied);
                     break;
                 }
                 case "/moveTaskToDisplay": {
