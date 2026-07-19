@@ -71,11 +71,26 @@ public class Adb {
   private volatile Exception serverStartFailure;
 
   public Adb(String uuid, String address, AdbKeyPair keyPair) throws Exception {
+    this(uuid, address, keyPair, true);
+  }
+
+  private Adb(String uuid, String address, AdbKeyPair keyPair, boolean startServer) throws Exception {
     this.uuid = uuid;
     Pair<String, Integer> addressPair = PublicTools.getIpAndPort(address);
     channel = new TcpChannel(addressPair.first, addressPair.second, false);
     tcpTransport = true;
-    initializeConnection(keyPair, true);
+    initializeConnection(keyPair, startServer);
+  }
+
+  /**
+   * 为大流量数据建立独立的 ADB/TCP 物理连接，不重复启动远端 helper。
+   */
+  public static Adb createAuxiliaryTcp(String connectionId, String address,
+                                       AdbKeyPair keyPair) throws Exception {
+    if (connectionId == null || connectionId.isEmpty()) {
+      throw new IllegalArgumentException("connectionId is empty");
+    }
+    return new Adb(connectionId, address, keyPair, false);
   }
 
   public Adb(String address, AdbKeyPair keyPair) throws Exception {
@@ -111,7 +126,8 @@ public class Adb {
     int advertisedMaxData = tcpTransport
             ? AdbProtocol.CONNECT_MAXDATA_TCP
             : AdbProtocol.CONNECT_MAXDATA;
-    Log.i(TRANSPORT_LOG_TAG, "ADB handshake transport="
+    Log.i(TRANSPORT_LOG_TAG, "ADB handshake connection=" + uuid
+            + ", transport="
             + (tcpTransport ? "WiFi" : "USB")
             + ", advertisedMaxData=" + advertisedMaxData);
     channel.write(AdbProtocol.generateConnect(advertisedMaxData));
@@ -123,7 +139,8 @@ public class Adb {
     }
     MAX_DATA = message.arg1;
     L.log(uuid, "ADB connected, negotiated maxData=" + MAX_DATA);
-    Log.i(TRANSPORT_LOG_TAG, "ADB connected transport="
+    Log.i(TRANSPORT_LOG_TAG, "ADB connected connection=" + uuid
+            + ", transport="
             + (tcpTransport ? "WiFi" : "USB")
             + ", advertisedMaxData=" + advertisedMaxData
             + ", remoteMaxData=" + MAX_DATA);
@@ -609,7 +626,8 @@ public class Adb {
     long elapsedMs = now - transportStatsStartedAtMs;
     if (elapsedMs < TRANSPORT_STATS_INTERVAL_MS) return;
     double megabitsPerSecond = incomingWriteBytes * 8d / elapsedMs / 1000d;
-    Log.i(TRANSPORT_LOG_TAG, "ADB WiFi receive packets=" + incomingWritePackets
+    Log.i(TRANSPORT_LOG_TAG, "ADB WiFi receive connection=" + uuid
+            + ", packets=" + incomingWritePackets
             + ", rateMbps=" + String.format(java.util.Locale.US, "%.2f", megabitsPerSecond)
             + ", largestPacket=" + largestIncomingWriteBytes
             + ", maxGapMs=" + largestIncomingGapMs

@@ -43,11 +43,13 @@ import top.eiyooooo.easycontrol.app.client.view.ClientView;
 public class Client {
   private static final String AUDIO_LOG_TAG = "EasycontrolAudio";
   private static final String DISPLAY_LOG_TAG = "EasycontrolDisplay";
+  private static final String TRANSPORT_LOG_TAG = "EasycontrolTransport";
   private static final String VIDEO_LOG_TAG = "EasycontrolVideo";
   private static final long VIDEO_STATS_INTERVAL_MS = 2_000L;
   private static final String DISPLAY_PROFILE_STANDARD = "standard-phone";
   private static final String DISPLAY_PROFILE_EMBEDDED = "embedded-wide";
   private static final float EMBEDDED_FLOW_MIN_ASPECT_RATIO = 16f / 9f;
+  private static final int EMBEDDED_FLOW_MIN_SMALLEST_WIDTH_DP = 600;
   private static final long EMBEDDED_DISPLAY_RESIZE_DELAY_MS = 650;
   private static final long EMBEDDED_DISPLAY_SETTLE_DELAY_MS = 300;
   // 状态，0 表示初始化中，1 表示已连接，-1 表示已关闭。
@@ -64,9 +66,12 @@ public class Client {
   private static final int AUDIO_OWNER_PRIORITY_PRIMARY = 100;
   private static final int AUDIO_OWNER_PRIORITY_DIRECT_MIRROR = 200;
   private static final int AUDIO_OWNER_PRIORITY_UID_FLOW = 300;
+  private static final long AUDIO_OWNER_AUDIBLE_GRACE_MS = 1_500L;
+  private static final long AUDIO_OWNER_REEVALUATE_INTERVAL_MS = 250L;
 
   // 连接相关对象。
   public Adb adb;
+  private Adb videoAdb;
   private BufferStream bufferStream;
   private BufferStream videoStream;
   private BufferStream shell;
@@ -91,6 +96,8 @@ public class Client {
   private VideoDecode videoDecode;
   // 同一个直接投屏 Client 可以同时承载媒体、导航两个独立解码器。
   private final AudioDecode[] audioDecodes = new AudioDecode[2];
+  private final long[] lastAudibleAudioMs = new long[2];
+  private final long[] lastAudioOwnerReevaluateMs = new long[2];
   // 控制包封装器，最终会把二进制协议写入底层通道。
   public final ControlPacket controlPacket = new ControlPacket(this::write);
   public final ClientView clientView;
@@ -103,6 +110,7 @@ public class Client {
   public volatile int displayId = 0;
   // 本次应用流转对应的远端任务信息，也是 UID 定向音频采集的依据。
   private String flowPackageName = "";
+  private String embeddedOrientationPackageName = "";
   private int flowUid = -1;
   private int flowCategory = ApplicationInfo.CATEGORY_UNDEFINED;
   private int audioRole = AudioDecode.ROLE_MEDIA;
@@ -544,6 +552,7 @@ public class Client {
       height = alignDisplaySize(height);
       int densityDpi = calculateEmbeddedDisplayDensity(
               width, height, hostSize.first, hostSize.second, hostDensityDpi);
+      int smallestWidthDp = Math.round(Math.min(width, height) * 160f / densityDpi);
       Log.i("EasycontrolEmbedded", "create virtual display with host ratio"
               + ", host=" + hostSize.first + "x" + hostSize.second
               + "@" + hostDensityDpi + "dpi"
@@ -553,9 +562,10 @@ public class Client {
               + ", rawHostRatio=" + rawHostRatio
               + ", targetRatio=" + targetRatio
               + ", ratioPolicy=" + ratioPolicy
-              + ", densityPolicy=fit-center-physical-size"
+              + ", densityPolicy=fit-center-large-screen"
               + ", targetDp=" + Math.round(width * 160f / densityDpi)
-              + "x" + Math.round(height * 160f / densityDpi));
+              + "x" + Math.round(height * 160f / densityDpi)
+              + ", smallestWidthDp=" + smallestWidthDp);
       return new VirtualDisplaySpec(width, height, densityDpi);
     } catch (Exception e) {
       Log.w(DISPLAY_LOG_TAG, "failed to calculate virtual display size", e);
@@ -580,6 +590,12 @@ public class Client {
     float heightScale = (float) targetHeight / hostHeight;
     // 与 fit-center 的实际缩放轴一致，避免存在黑边时控件物理尺寸忽大忽小。
     int densityDpi = Math.round(hostDensityDpi * Math.max(widthScale, heightScale));
+    // 像素已是横屏仍可能因密度过高而只有 300~400dp，高德会继续加载手机竖屏资源。
+    // 限制密度使内嵌虚拟屏至少进入 600dp 大屏档，不影响普通镜像和非内嵌流转。
+    int largeScreenMaxDensity = Math.max(72,
+            (int) Math.floor(Math.min(targetWidth, targetHeight) * 160f
+                    / EMBEDDED_FLOW_MIN_SMALLEST_WIDTH_DP));
+    densityDpi = Math.min(densityDpi, largeScreenMaxDensity);
     return Math.max(72, Math.min(1000, densityDpi));
   }
 
@@ -841,33 +857,79 @@ public class Client {
             + ", displayId=" + displayId
             + ", response=" + output);
     if (!output.contains("success")) throw new IllegalStateException(output);
+    if (embeddedMode && packageName != null && !packageName.isEmpty()
+            && output.contains("orientationOverride=true")) {
+      synchronized (lifecycleLock) {
+        embeddedOrientationPackageName = packageName;
+      }
+    }
+  }
+
+  private void restoreEmbeddedOrientationOverride(Device device) {
+    String packageName;
+    synchronized (lifecycleLock) {
+      packageName = embeddedOrientationPackageName;
+      embeddedOrientationPackageName = "";
+    }
+    if (packageName == null || packageName.isEmpty()) return;
+    try {
+      String response = Adb.getStringResponseFromServer(
+              device, "setOrientationOverride", "package=" + packageName, "enabled=0");
+      Log.i(DISPLAY_LOG_TAG, "embedded orientation override restored"
+              + ", package=" + packageName + ", response=" + response);
+    } catch (Exception error) {
+      Log.w(DISPLAY_LOG_TAG, "restore embedded orientation override failed"
+              + ", package=" + packageName, error);
+    }
   }
 
   // 连接Server
   private void connectServer() throws Exception {
     Thread.sleep(50);
-    for (int i = 0; i < serverSocketConnectAttempts; i++) {
-      BufferStream controlStream = null;
-      BufferStream pendingVideoStream = null;
-      try {
-        controlStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
-        pendingVideoStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
-        synchronized (lifecycleLock) {
-          if (releaseStarted.get()) throw new InterruptedException("client released while connecting");
-          bufferStream = controlStream;
-          videoStream = pendingVideoStream;
-          startupConnected = true;
-        }
-        L.log(uuid, "scrcpy sockets connected, attempt=" + (i + 1));
-        return;
-      } catch (Exception ignored) {
-        if (controlStream != null) controlStream.close();
-        if (pendingVideoStream != null) pendingVideoStream.close();
-        if (releaseStarted.get() || Thread.currentThread().isInterrupted()) throw new InterruptedException("client connection cancelled");
-        Thread.sleep(serverSocketRetryDelay);
+    Adb pendingVideoAdb = null;
+    try {
+      if (!usbTransport) {
+        pendingVideoAdb = Adb.createAuxiliaryTcp(
+                uuid + "-video-" + sessionId.substring(0, 8),
+                clientView.device.address,
+                AppData.keyPair);
+        Log.i(TRANSPORT_LOG_TAG, "WiFi split transport ready uuid=" + uuid
+                + ", control=primary, video=auxiliary");
       }
+
+      for (int i = 0; i < serverSocketConnectAttempts; i++) {
+        BufferStream controlStream = null;
+        BufferStream pendingVideoStream = null;
+        try {
+          controlStream = adb.localSocketForward("easycontrol_for_car_scrcpy");
+          pendingVideoStream = (pendingVideoAdb == null ? adb : pendingVideoAdb)
+                  .localSocketForward("easycontrol_for_car_scrcpy");
+          synchronized (lifecycleLock) {
+            if (releaseStarted.get()) {
+              throw new InterruptedException("client released while connecting");
+            }
+            bufferStream = controlStream;
+            videoStream = pendingVideoStream;
+            videoAdb = pendingVideoAdb;
+            startupConnected = true;
+          }
+          pendingVideoAdb = null;
+          L.log(uuid, "scrcpy sockets connected, attempt=" + (i + 1)
+                  + ", transport=" + (usbTransport ? "USB shared" : "WiFi split"));
+          return;
+        } catch (Exception ignored) {
+          if (controlStream != null) controlStream.close();
+          if (pendingVideoStream != null) pendingVideoStream.close();
+          if (releaseStarted.get() || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("client connection cancelled");
+          }
+          Thread.sleep(serverSocketRetryDelay);
+        }
+      }
+      throw new Exception(AppData.main.getString(R.string.error_connect_server));
+    } finally {
+      if (pendingVideoAdb != null) pendingVideoAdb.close();
     }
-    throw new Exception(AppData.main.getString(R.string.error_connect_server));
   }
 
   // 服务分发
@@ -960,7 +1022,10 @@ public class Client {
               synchronized (mediaLifecycleLock) {
                 if (status != 1 || Thread.currentThread().isInterrupted()) return;
                 if (audioDecodes[frameRole] == null) {
-                  audioDecodes[frameRole] = new AudioDecode(useOpus, audioFrame, audioHandlers[frameRole], frameRole);
+                  final int decoderRole = frameRole;
+                  audioDecodes[frameRole] = new AudioDecode(
+                          useOpus, audioFrame, audioHandlers[frameRole], frameRole,
+                          () -> onDecodedAudioActivity(decoderRole));
                   L.log(uuid, "audio decoder created role=" + audioRoleName(frameRole)
                           + ", protocol=" + (taggedAudio ? "tagged" : "legacy"));
                 }
@@ -1047,6 +1112,7 @@ public class Client {
               int releasedDisplayId = displayId;
               new Thread(() -> {
                 try {
+                  restoreEmbeddedOrientationOverride(clientView.device);
                   Adb.getStringResponseFromServer(clientView.device, "releaseVirtualDisplay", "id=" + releasedDisplayId);
                 } catch (Exception ignored) {
                 }
@@ -1080,6 +1146,12 @@ public class Client {
             try {
               if (videoStream != null) videoStream.close();
             } catch (Exception ignored) {
+            }
+            try {
+              if (videoAdb != null) videoAdb.close();
+            } catch (Exception ignored) {
+            } finally {
+              videoAdb = null;
             }
             try {
               if (shell != null) shell.close();
@@ -1198,6 +1270,7 @@ public class Client {
         embeddedHostSizeGeneration++;
       }
       try {
+        restoreEmbeddedOrientationOverride(clientView.device);
         Adb.getStringResponseFromServer(clientView.device, "releaseVirtualDisplay", "id=" + displayId);
       } catch (Exception ignored) {
       }
@@ -1260,7 +1333,7 @@ public class Client {
     AudioDecode decoder = audioDecodes[role];
     if (decoder == null) return;
     if (play && !canPlayAudio()) return;
-    if (play) requestAudioOwnerLocked(role);
+    if (play) requestAudioOwnerLocked(role, false);
     else {
       if (audioOwners[role] == this) audioOwners[role] = null;
       decoder.playAudio(false);
@@ -1299,7 +1372,21 @@ public class Client {
             + ", activeClients=" + sameDeviceClients.size());
   }
 
-  private void requestAudioOwnerLocked(int role) {
+  private void onDecodedAudioActivity(int role) {
+    role = normalizeAudioRole(role);
+    synchronized (audioOwnerLock) {
+      long now = SystemClock.elapsedRealtime();
+      lastAudibleAudioMs[role] = now;
+      if (audioOwners[role] == this
+              || now - lastAudioOwnerReevaluateMs[role] < AUDIO_OWNER_REEVALUATE_INTERVAL_MS) {
+        return;
+      }
+      lastAudioOwnerReevaluateMs[role] = now;
+      requestAudioOwnerLocked(role, true);
+    }
+  }
+
+  private void requestAudioOwnerLocked(int role, boolean audibleRequest) {
     AudioDecode decoder = audioDecodes[role];
     if (decoder == null) return;
     int requestedPriority = audioOwnerPriority(role);
@@ -1317,15 +1404,23 @@ public class Client {
     }
 
     int oldPriority = oldOwner == null ? AUDIO_OWNER_PRIORITY_NONE : oldOwner.audioOwnerPriority(role);
+    long now = SystemClock.elapsedRealtime();
+    long oldAudibleAgeMs = oldOwner == null || oldOwner.lastAudibleAudioMs[role] == 0
+            ? Long.MAX_VALUE : now - oldOwner.lastAudibleAudioMs[role];
+    boolean retainEqualPriorityOwner = oldPriority == requestedPriority
+            && (!audibleRequest || oldAudibleAgeMs <= AUDIO_OWNER_AUDIBLE_GRACE_MS);
     if (oldOwner != null
             && oldOwner.audioDecodes[role] != null
-            && oldPriority > requestedPriority) {
+            && (oldPriority > requestedPriority || retainEqualPriorityOwner)) {
       decoder.playAudio(false);
       Log.i(AUDIO_LOG_TAG, "audio owner retained role=" + audioRoleName(role)
               + ", owner={" + oldOwner.audioClientDescription() + "}"
               + ", ownerPriority=" + oldPriority
+              + ", ownerAudibleAgeMs=" + (oldAudibleAgeMs == Long.MAX_VALUE
+                      ? "never" : oldAudibleAgeMs)
               + ", standby={" + audioClientDescription() + "}"
-              + ", standbyPriority=" + requestedPriority);
+              + ", standbyPriority=" + requestedPriority
+              + ", request=" + (audibleRequest ? "audible" : "pipeline"));
       return;
     }
 
@@ -1337,7 +1432,10 @@ public class Client {
     Log.i(AUDIO_LOG_TAG, "audio owner changed role=" + audioRoleName(role)
             + ", old={" + (oldOwner == null ? "none" : oldOwner.audioClientDescription()) + "}"
             + ", new={" + audioClientDescription() + "}"
-            + ", priority=" + requestedPriority);
+            + ", priority=" + requestedPriority
+            + ", request=" + (audibleRequest ? "audible" : "pipeline")
+            + ", oldAudibleAgeMs=" + (oldAudibleAgeMs == Long.MAX_VALUE
+                    ? "never" : oldAudibleAgeMs));
   }
 
   private void releaseAudioOwner() {
@@ -1359,7 +1457,7 @@ public class Client {
                 + ", old={" + audioClientDescription() + "}"
                 + ", replacement={" + (replacement == null ? "none" : replacement.audioClientDescription()) + "}"
                 + ", replacementPriority=" + replacementPriority);
-        if (replacement != null) replacement.requestAudioOwnerLocked(role);
+        if (replacement != null) replacement.requestAudioOwnerLocked(role, false);
       }
     }
   }

@@ -353,6 +353,16 @@ public class Server {
                     postResponse("success move task, strategy=" + strategy);
                     break;
                 }
+                case "/setOrientationOverride": {
+                    String packageName = request.get("package");
+                    String enabled = request.get("enabled");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    if (enabled == null) throw new Exception("parameter 'enabled' not found");
+                    boolean applied = Channel.setUserOrientationOverride(
+                            packageName, "1".equals(enabled));
+                    postResponse("success orientation override, applied=" + applied);
+                    break;
+                }
                 case "/stopAppByPackage": {
                     String packageName = request.get("package");
                     if (packageName == null) throw new Exception("parameter 'package' not found");

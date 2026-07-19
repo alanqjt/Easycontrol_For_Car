@@ -45,6 +45,8 @@ public class AudioDecode {
   private final Object navigationFocusLock = new Object();
   private final int audioRole;
   private final Handler audioHandler;
+  private final Runnable audibleAudioListener;
+  private long lastAudibleCallbackMs;
   private long inputFrameCount;
   private long outputFrameCount;
   private long lastNavigationActivityMs;
@@ -129,13 +131,14 @@ public class AudioDecode {
             pcm.position(dataStart);
             pcm.limit((int) dataEndLong);
             outputFrameCount++;
-            boolean audibleNavigation = recordDecodedPcm(pcm);
+            boolean audiblePcm = recordDecodedPcm(pcm);
+            notifyAudibleAudio(audiblePcm);
             int requestedBytes = pcm.remaining();
             int lastWriteResult = 0;
             long writeDurationMs = 0;
             // 只有当前连接是音频 owner 时才写入 AudioTrack，非 owner 仍持续解码避免阻塞。
             if (shouldPlay) {
-              if (audioRole == ROLE_NAVIGATION && audibleNavigation) {
+              if (audioRole == ROLE_NAVIGATION && audiblePcm) {
                 noteNavigationAudioActivity();
               }
               // 导航必须完整写入，避免缓冲区暂满时丢掉播报结尾；媒体保持低延迟非阻塞写入。
@@ -195,13 +198,24 @@ public class AudioDecode {
     }
   };
 
-  public AudioDecode(boolean useOpus, byte[] csd0, Handler handler, int audioRole) throws IOException {
+  public AudioDecode(boolean useOpus, byte[] csd0, Handler handler, int audioRole,
+                     Runnable audibleAudioListener) throws IOException {
     this.audioRole = audioRole == ROLE_NAVIGATION ? ROLE_NAVIGATION : ROLE_MEDIA;
     this.audioHandler = handler != null ? handler : AppData.uiHandler;
+    this.audibleAudioListener = audibleAudioListener;
     // 先创建解码器，把压缩音频流转成 PCM。
     setAudioDecodec(useOpus, csd0, handler);
     // 再创建 AudioTrack，让 PCM 可以尽快进入系统播放链路。
     setAudioTrack();
+  }
+
+  private void notifyAudibleAudio(boolean audiblePcm) {
+    if (!audiblePcm || audibleAudioListener == null) return;
+    long now = SystemClock.elapsedRealtime();
+    if (now - lastAudibleCallbackMs < 250L) return;
+    lastAudibleCallbackMs = now;
+    // 解码回调持有 codecLock，异步通知避免与 Client 的 owner 锁交叉死锁。
+    audioHandler.post(audibleAudioListener);
   }
 
   public void release() {

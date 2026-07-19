@@ -49,6 +49,7 @@ import java.util.List;
  */
 
 public class Channel {
+    private static final long OVERRIDE_ANY_ORIENTATION_TO_USER = 310816437L;
     DisplayMetrics displayMetrics;
     Configuration configuration;
     Context context;
@@ -377,15 +378,8 @@ public class Channel {
                 }
             }
 
-            ActivityOptions options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId);
-            setFullscreenLaunchMode(options, "move task");
-
-            Method startFromRecents = activityTaskManager.getClass()
-                    .getMethod("startActivityFromRecents", int.class, Bundle.class);
-            Object result = startFromRecents.invoke(activityTaskManager, taskId, options.toBundle());
-            if (result instanceof Integer && (Integer) result < 0) {
-                throw new IllegalStateException("startActivityFromRecents result=" + result);
-            }
+            Object result = startTaskFromRecentsOnDisplay(
+                    activityTaskManager, taskId, displayId, "move task");
             L.i("move task with startActivityFromRecents, taskId=" + taskId
                     + ", displayId=" + displayId + ", package=" + packageName
                     + ", result=" + result);
@@ -400,15 +394,43 @@ public class Channel {
         }
 
         String refreshStrategy = "none";
+        boolean orientationOverrideApplied = false;
         if (recreateActivity && packageName != null && !packageName.isEmpty()) {
+            orientationOverrideApplied = setUserOrientationOverride(packageName, true);
+            refreshStrategy = orientationOverrideApplied
+                    ? "orientationOverride" : "orientationOverrideUnavailable";
+            if (orientationOverrideApplied) {
+                try {
+                    // 修改兼容项可能会重启应用进程，再把原任务明确拉回目标显示器。
+                    Thread.sleep(250);
+                    Object activityTaskManager = Class.forName("android.app.ActivityTaskManager")
+                            .getDeclaredMethod("getService")
+                            .invoke(null);
+                    Object result = startTaskFromRecentsOnDisplay(
+                            activityTaskManager, taskId, displayId, "orientation override");
+                    refreshStrategy += "+restartFromRecents";
+                    L.i("reactivated task after orientation override, taskId=" + taskId
+                            + ", displayId=" + displayId + ", result=" + result);
+                } catch (Exception restartError) {
+                    L.w("reactivate task after orientation override failed",
+                            unwrapReflectionError(restartError));
+                    String mainActivity = getAppMainActivity(packageName);
+                    if (mainActivity == null || mainActivity.isEmpty()) {
+                        refreshStrategy += "+restartUnavailable";
+                    } else {
+                        openApp(packageName, mainActivity, displayId);
+                        refreshStrategy += "+openMainActivity";
+                    }
+                }
+            }
             try {
                 Thread.sleep(150);
                 forceTaskRelayout(taskId);
-                refreshStrategy = "fullscreenRelayout";
+                refreshStrategy += "+fullscreenRelayout";
             } catch (Exception relayoutError) {
                 L.w("task relayout after display move failed",
                         unwrapReflectionError(relayoutError));
-                refreshStrategy = "relayoutUnsupported";
+                refreshStrategy += "+relayoutUnsupported";
             }
             try {
                 Thread.sleep(150);
@@ -420,7 +442,23 @@ public class Channel {
                 refreshStrategy += "+restartUnsupported";
             }
             try {
-                Thread.sleep(200);
+                // 进程重建后任务可能短暂回到默认显示器，必须再次带 displayId 激活。
+                Thread.sleep(450);
+                Object activityTaskManager = Class.forName("android.app.ActivityTaskManager")
+                        .getDeclaredMethod("getService")
+                        .invoke(null);
+                Object result = startTaskFromRecentsOnDisplay(
+                        activityTaskManager, taskId, displayId, "post process restart");
+                refreshStrategy += "+postRestartFromRecents";
+                L.i("reactivated task after process restart, taskId=" + taskId
+                        + ", displayId=" + displayId + ", result=" + result);
+            } catch (Exception restartError) {
+                L.w("reactivate task after process restart failed",
+                        unwrapReflectionError(restartError));
+                refreshStrategy += "+postRestartUnavailable";
+            }
+            try {
+                Thread.sleep(250);
                 forceTaskRelayout(taskId);
                 refreshStrategy += "+finalRelayout";
             } catch (Exception relayoutError) {
@@ -432,7 +470,65 @@ public class Channel {
         L.i("move task finished, taskId=" + taskId + ", displayId=" + displayId
                 + ", package=" + packageName + ", strategy=" + strategy
                 + ", refresh=" + refreshStrategy);
-        return strategy + ",refresh=" + refreshStrategy;
+        return strategy + ",refresh=" + refreshStrategy
+                + ",orientationOverride=" + orientationOverrideApplied;
+    }
+
+    private static Object startTaskFromRecentsOnDisplay(Object activityTaskManager, int taskId,
+                                                        int displayId, String operation)
+            throws Exception {
+        ActivityOptions options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId);
+        setFullscreenLaunchMode(options, operation);
+        Method startFromRecents = activityTaskManager.getClass()
+                .getMethod("startActivityFromRecents", int.class, Bundle.class);
+        Object result = startFromRecents.invoke(activityTaskManager, taskId, options.toBundle());
+        if (result instanceof Integer && (Integer) result < 0) {
+            throw new IllegalStateException("startActivityFromRecents result=" + result);
+        }
+        return result;
+    }
+
+    /**
+     * Android 15 大屏兼容模式仍会给固定竖屏应用加黑边；该兼容项允许应用跟随
+     * 虚拟显示器的横屏方向。旧系统不支持时保留原有任务转移逻辑。
+     */
+    public static boolean setUserOrientationOverride(String packageName, boolean enabled) {
+        if (Build.VERSION.SDK_INT < 35) {
+            L.i("embedded orientation override skipped, sdk=" + Build.VERSION.SDK_INT
+                    + ", package=" + packageName + ", enabled=" + enabled);
+            return false;
+        }
+        if (!packageName.matches("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+")) {
+            L.w("embedded orientation override rejected invalid package=" + packageName);
+            return false;
+        }
+
+        String[] changes = {
+                "OVERRIDE_ANY_ORIENTATION_TO_USER",
+                String.valueOf(OVERRIDE_ANY_ORIENTATION_TO_USER)
+        };
+        for (String change : changes) {
+            try {
+                String output = execReadOutput(
+                        "am compat " + (enabled ? "enable" : "disable")
+                                + " " + change + " " + packageName
+                                + "; echo EC_COMPAT_EXIT=$?");
+                boolean success = output.contains("EC_COMPAT_EXIT=0");
+                if (success) {
+                    L.i("embedded orientation override updated, package=" + packageName
+                            + ", enabled=" + enabled
+                            + ", change=" + change + ", output=" + output);
+                    return true;
+                }
+                L.w("embedded orientation override rejected, package=" + packageName
+                        + ", enabled=" + enabled + ", change=" + change
+                        + ", output=" + output);
+            } catch (Exception error) {
+                L.w("embedded orientation override attempt failed, package=" + packageName
+                        + ", enabled=" + enabled + ", change=" + change, error);
+            }
+        }
+        return false;
     }
 
     @SuppressLint("BlockedPrivateApi")
