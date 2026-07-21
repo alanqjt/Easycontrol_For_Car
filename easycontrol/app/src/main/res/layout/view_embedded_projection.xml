@@ -147,9 +147,9 @@
         android:id="@+id/button_nav_bar"
         android:layout_width="42dp"
         android:layout_height="42dp"
-        android:contentDescription="@string/embedded_navigation_bar"
+        android:contentDescription="@string/embedded_virtual_navigation_bar_show"
         android:padding="9dp"
-        android:src="@drawable/not_equal"
+        android:src="@drawable/virtual_navigation_bar"
         android:tint="@color/onCardBackground" />
 
       <ImageView

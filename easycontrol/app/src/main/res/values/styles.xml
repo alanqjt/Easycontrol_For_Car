@@ -2,6 +2,7 @@
 <resources>
     <style name="Theme.EasyControl" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:buttonStyle">@style/Widget.EasyControl.Button</item>
+        <item name="android:windowFullscreen">true</item>
     </style>
 
     <style name="Widget.EasyControl.Button" parent="@android:style/Widget.DeviceDefault.Button">

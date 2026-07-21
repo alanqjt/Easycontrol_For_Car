@@ -296,6 +296,8 @@
   <string name="embedded_home">Home</string>
   <string name="embedded_back">Back</string>
   <string name="embedded_navigation_bar">Show or hide navigation bar</string>
+  <string name="embedded_virtual_navigation_bar_show">Show virtual navigation bar</string>
+  <string name="embedded_virtual_navigation_bar_hide">Hide virtual navigation bar</string>
   <string name="embedded_rotate">Rotate remote screen</string>
   <string name="embedded_transfer">Switch screen mirroring or app transfer</string>
   <string name="embedded_screen_light">Toggle remote screen backlight</string>

@@ -296,6 +296,8 @@
   <string name="embedded_home">主页</string>
   <string name="embedded_back">返回</string>
   <string name="embedded_navigation_bar">显示或隐藏导航栏</string>
+  <string name="embedded_virtual_navigation_bar_show">显示虚拟导航栏</string>
+  <string name="embedded_virtual_navigation_bar_hide">隐藏虚拟导航栏</string>
   <string name="embedded_rotate">旋转被控端画面</string>
   <string name="embedded_transfer">切换屏幕镜像或应用流转</string>
   <string name="embedded_screen_light">切换被控端屏幕背光</string>

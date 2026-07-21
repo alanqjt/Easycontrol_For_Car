@@ -35,7 +35,7 @@ public final class EmbeddedView {
     binding = ViewEmbeddedProjectionBinding.inflate(LayoutInflater.from(AppData.main));
     setButtonListeners();
     setKeyListener();
-    setNavBarVisible(AppData.setting.getDefaultShowNavBar());
+    setNavBarVisible(false);
     binding.textureViewLayout.addOnLayoutChangeListener((view, left, top, right, bottom,
                                                           oldLeft, oldTop, oldRight, oldBottom) -> {
       if (right - left == oldRight - oldLeft && bottom - top == oldBottom - oldTop) return;
@@ -63,7 +63,7 @@ public final class EmbeddedView {
     binding.loadingGroup.setVisibility(View.GONE);
     binding.buttonToolbarToggle.setVisibility(View.VISIBLE);
     updateToolbarVisibility();
-    setNavBarVisible(AppData.setting.getDefaultShowNavBar());
+    setNavBarVisible(false);
     attachTextureView();
     binding.editText.requestFocus();
     binding.getRoot().post(this::updateMaxSize);
@@ -161,7 +161,12 @@ public final class EmbeddedView {
 
   private void setNavBarVisible(boolean visible) {
     binding.navBar.setVisibility(ready && visible ? View.VISIBLE : View.GONE);
-    binding.buttonNavBar.setImageResource(visible ? R.drawable.not_equal : R.drawable.equals);
+    binding.buttonNavBar.setImageResource(visible
+            ? R.drawable.virtual_navigation_bar_off
+            : R.drawable.virtual_navigation_bar);
+    binding.buttonNavBar.setContentDescription(AppData.main.getString(visible
+            ? R.string.embedded_virtual_navigation_bar_hide
+            : R.string.embedded_virtual_navigation_bar_show));
   }
 
   private void setKeyListener() {
