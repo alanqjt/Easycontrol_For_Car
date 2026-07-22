@@ -19,30 +19,47 @@ public class AdbProtocol {
 
   public static final int CMD_AUTH = 0x48545541;
   public static final int CMD_CNXN = 0x4e584e43;
+  public static final int CMD_SYNC = 0x434e5953;
   public static final int CMD_OPEN = 0x4e45504f;
   public static final int CMD_OKAY = 0x59414b4f;
   public static final int CMD_CLSE = 0x45534c43;
   public static final int CMD_WRTE = 0x45545257;
+  public static final int CMD_STLS = 0x534c5453;
 
-  public static final int CONNECT_VERSION = 0x01000000;
+  public static final int CONNECT_VERSION_MIN = 0x01000000;
+  public static final int CONNECT_VERSION_SKIP_CHECKSUM = 0x01000001;
+  public static final int CONNECT_VERSION = CONNECT_VERSION_SKIP_CHECKSUM;
+  public static final int STLS_VERSION = 0x01000000;
   public static final int CONNECT_MAXDATA = 15 * 1024;
-  public static final int CONNECT_MAXDATA_TCP = 256 * 1024;
+  public static final int CONNECT_MAXDATA_TCP = 1024 * 1024;
 
-  public static final byte[] CONNECT_PAYLOAD = "host::\0".getBytes();
+  public static final byte[] CONNECT_PAYLOAD = "host::\0".getBytes(StandardCharsets.UTF_8);
 
   public static ByteBuffer generateConnect() {
     return generateConnect(CONNECT_MAXDATA);
   }
 
   public static ByteBuffer generateConnect(int maxData) {
+    return generateConnect(CONNECT_VERSION, maxData);
+  }
+
+  public static ByteBuffer generateConnect(int version, int maxData) {
+    if (version < CONNECT_VERSION_MIN || version > CONNECT_VERSION) {
+      throw new IllegalArgumentException("invalid ADB connect version: 0x"
+              + Integer.toHexString(version));
+    }
     if (maxData <= 128 || maxData > MAX_ADB_PAYLOAD_LENGTH) {
       throw new IllegalArgumentException("invalid ADB connect maxData: " + maxData);
     }
-    return generateMessage(CMD_CNXN, CONNECT_VERSION, maxData, CONNECT_PAYLOAD);
+    return generateMessage(CMD_CNXN, version, maxData, CONNECT_PAYLOAD);
   }
 
   public static ByteBuffer generateAuth(int type, byte[] data) {
     return generateMessage(CMD_AUTH, type, 0, data);
+  }
+
+  public static ByteBuffer generateStls() {
+    return generateMessage(CMD_STLS, STLS_VERSION, 0, null);
   }
 
   public static ByteBuffer generateOpen(int localId, String dest) {
@@ -98,7 +115,7 @@ public class AdbProtocol {
     return tmpBuffer;
   }
 
-  private static int payloadChecksum(byte[] payload) {
+  static int payloadChecksum(byte[] payload) {
     int checksum = 0;
     for (byte b : payload) checksum += (b & 0xFF);
     return checksum;
@@ -109,20 +126,72 @@ public class AdbProtocol {
     public int arg0;
     public int arg1;
     public int payloadLength;
+    public int dataCheck;
+    public int magic;
     public ByteBuffer payload = null;
 
     public static AdbMessage parseAdbMessage(AdbChannel channel) throws IOException, InterruptedException {
+      return parseAdbMessage(channel, CONNECT_VERSION_MIN, MAX_ADB_PAYLOAD_LENGTH);
+    }
+
+    public static AdbMessage parseAdbMessage(AdbChannel channel, int protocolVersion,
+                                             int maxPayloadLength)
+            throws IOException, InterruptedException {
       AdbMessage msg = new AdbMessage();
       ByteBuffer buffer = channel.read(ADB_HEADER_LENGTH).order(ByteOrder.LITTLE_ENDIAN);
+
+      if (buffer.remaining() != ADB_HEADER_LENGTH) {
+        throw new IOException("incomplete ADB header: " + buffer.remaining());
+      }
 
       msg.command = buffer.getInt();
       msg.arg0 = buffer.getInt();
       msg.arg1 = buffer.getInt();
       msg.payloadLength = buffer.getInt();
-      if (msg.payloadLength < 0 || msg.payloadLength > MAX_ADB_PAYLOAD_LENGTH) throw new IOException("invalid ADB payload length: " + msg.payloadLength);
-      if (msg.payloadLength > 0) msg.payload = channel.read(msg.payloadLength);
+      msg.dataCheck = buffer.getInt();
+      msg.magic = buffer.getInt();
+
+      if (msg.magic != ~msg.command) {
+        throw new IOException("invalid ADB command magic: command=0x"
+                + Integer.toHexString(msg.command) + ", magic=0x"
+                + Integer.toHexString(msg.magic));
+      }
+      if (!isKnownCommand(msg.command)) {
+        throw new IOException("invalid ADB command: 0x" + Integer.toHexString(msg.command));
+      }
+      int payloadLimit = Math.min(MAX_ADB_PAYLOAD_LENGTH, maxPayloadLength);
+      if (msg.payloadLength < 0 || msg.payloadLength > payloadLimit) {
+        throw new IOException("invalid ADB payload length: " + msg.payloadLength
+                + ", limit=" + payloadLimit);
+      }
+      if (msg.payloadLength == 0) {
+        return msg;
+      }
+
+      msg.payload = channel.read(msg.payloadLength);
+      if (msg.payload.remaining() != msg.payloadLength) {
+        throw new IOException("incomplete ADB payload: expected=" + msg.payloadLength
+                + ", actual=" + msg.payload.remaining());
+      }
+      boolean checksumRequired = protocolVersion <= CONNECT_VERSION_MIN
+              || (msg.command == CMD_CNXN && msg.arg0 <= CONNECT_VERSION_MIN);
+      if (checksumRequired) {
+        byte[] payload = new byte[msg.payload.remaining()];
+        msg.payload.duplicate().get(payload);
+        int actualChecksum = payloadChecksum(payload);
+        if (actualChecksum != msg.dataCheck) {
+          throw new IOException("invalid ADB payload checksum: expected=" + msg.dataCheck
+                  + ", actual=" + actualChecksum);
+        }
+      }
 
       return msg;
+    }
+
+    private static boolean isKnownCommand(int command) {
+      return command == CMD_SYNC || command == CMD_CNXN || command == CMD_OPEN
+              || command == CMD_OKAY || command == CMD_CLSE || command == CMD_WRTE
+              || command == CMD_AUTH || command == CMD_STLS;
     }
   }
 }

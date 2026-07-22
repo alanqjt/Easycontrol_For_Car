@@ -127,6 +127,11 @@ public class DbHelper extends SQLiteOpenHelper {
     getWritableDatabase().delete(tableName, "uuid=?", new String[]{String.valueOf(device.uuid)});
   }
 
+  // 清理由旧版易变 USB 内核路径生成的幽灵设备，不影响真实序列号设备。
+  public int deleteTransientUsbDevices() {
+    return getWritableDatabase().delete(tableName, "uuid LIKE ?", new String[]{"/dev/bus/usb/%"});
+  }
+
   private ContentValues getValues(Device device) {
     ContentValues values = new ContentValues();
     values.put("uuid", device.uuid);

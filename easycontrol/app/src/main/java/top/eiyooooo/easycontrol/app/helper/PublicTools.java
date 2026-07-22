@@ -244,6 +244,8 @@ public class PublicTools {
     itemAddDeviceBinding.specifiedApp.setText(device.specified_app);
     // 创建View
     createDeviceOptionSet(context, itemAddDeviceBinding.options, device);
+    itemAddDeviceBinding.isOptions.setChecked(true);
+    itemAddDeviceBinding.options.setVisibility(View.VISIBLE);
     // 特殊设备不允许修改
     if (!device.isNormalDevice()) {
       itemAddDeviceBinding.addressTitle.setVisibility(View.GONE);

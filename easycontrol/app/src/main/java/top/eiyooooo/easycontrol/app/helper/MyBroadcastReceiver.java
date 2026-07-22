@@ -27,6 +27,9 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
   private static final String ACTION_USB_PERMISSION = BuildConfig.APPLICATION_ID + ".USB_PERMISSION";
   private static final String ACTION_CONTROL = "top.eiyooooo.easycontrol.app.CONTROL";
   private static final String ACTION_SCREEN_OFF = "android.intent.action.SCREEN_OFF";
+  private static final int HONOR_USB_VENDOR_ID = 0x339b;
+  private static final int USB_IDENTITY_RETRY_COUNT = 3;
+  private static final long USB_IDENTITY_RETRY_DELAY_MS = 250L;
   public static final String ACTION_CONFIGURATION_CHANGED = "android.intent.action.CONFIGURATION_CHANGED";
 
   private DeviceListAdapter deviceListAdapter;
@@ -201,10 +204,17 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
     for (Map.Entry<String, UsbDevice> entry : DeviceListAdapter.linkDevices.entrySet()) {
       UsbDevice tmp = entry.getValue();
       if (tmp.getVendorId() == usbDevice.getVendorId() && tmp.getProductId() == usbDevice.getProductId()) {
-        for (Client client : Client.allClient) if (client.uuid.equals(entry.getKey())) client.release(AppData.main.getString(R.string.error_stream_closed));
+        boolean preserveAdb = false;
+        for (Client client : Client.allClient) {
+          if (!client.uuid.equals(entry.getKey())) continue;
+          if (client.shouldIgnoreUsbDetach()) preserveAdb = true;
+          else client.release(AppData.main.getString(R.string.error_stream_closed));
+        }
         DeviceListAdapter.linkDevices.remove(entry.getKey());
-        Adb disconnectedAdb = Adb.adbMap.remove(entry.getKey());
-        if (disconnectedAdb != null) disconnectedAdb.close();
+        if (!preserveAdb) {
+          Adb disconnectedAdb = Adb.adbMap.remove(entry.getKey());
+          if (disconnectedAdb != null) disconnectedAdb.close();
+        }
         ConnectHelper.needStartDefaultUSB.remove(entry.getKey());
         break;
       }
@@ -214,13 +224,27 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
 
   // 处理USB授权结果
   private void onGetUsbPer(UsbDevice usbDevice) {
+    onGetUsbPer(usbDevice, USB_IDENTITY_RETRY_COUNT);
+  }
+
+  private void onGetUsbPer(UsbDevice usbDevice, int retriesRemaining) {
     // 有线设备使用序列号作为唯一标识符
     if (!hasUsbPermission(usbDevice)) {
       L.log("USB", "USB permission missing after callback: " + describeUsbDevice(usbDevice));
       return;
     }
     String uuid = getUsbUuid(usbDevice);
-    if (uuid == null) return;
+    if (uuid == null) {
+      if (retriesRemaining > 0) {
+        AppData.uiHandler.postDelayed(
+                () -> retryUsbIdentity(usbDevice, retriesRemaining - 1),
+                USB_IDENTITY_RETRY_DELAY_MS);
+      } else {
+        L.log("USB", "USB device ignored because no stable serial is available: "
+                + describeUsbDevice(usbDevice));
+      }
+      return;
+    }
     // 查找ADB的接口
     for (int i = 0; i < usbDevice.getInterfaceCount(); i++) {
       UsbInterface tmpUsbInterface = usbDevice.getInterface(i);
@@ -245,6 +269,13 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
     }
   }
 
+  private void retryUsbIdentity(UsbDevice previousDevice, int retriesRemaining) {
+    if (AppData.usbManager == null) return;
+    UsbDevice currentDevice = AppData.usbManager.getDeviceList().get(previousDevice.getDeviceName());
+    if (currentDevice == null || currentDevice.getDeviceId() != previousDevice.getDeviceId()) return;
+    onGetUsbPer(currentDevice, retriesRemaining);
+  }
+
   private boolean hasUsbPermission(UsbDevice usbDevice) {
     try {
       return AppData.usbManager != null && AppData.usbManager.hasPermission(usbDevice);
@@ -256,14 +287,17 @@ public class MyBroadcastReceiver extends BroadcastReceiver {
   private String getUsbUuid(UsbDevice usbDevice) {
     try {
       String serialNumber = usbDevice.getSerialNumber();
-      if (serialNumber != null && !serialNumber.isEmpty()) return serialNumber;
+      if (serialNumber != null && !serialNumber.trim().isEmpty()) return serialNumber.trim();
     } catch (SecurityException e) {
       L.log("USB", e);
     } catch (Exception ignored) {
     }
-    String deviceName = usbDevice.getDeviceName();
-    if (deviceName != null && !deviceName.isEmpty()) return deviceName;
-    return "usb-" + usbDevice.getVendorId() + "-" + usbDevice.getProductId();
+    // /dev/bus/usb/... 是每次重新枚举都会变化的内核路径，不能作为持久 UUID。
+    // 荣耀 ADB 接口会短暂拿不到序列号；等待下一次重试/重枚举，避免制造幽灵设备。
+    if (usbDevice.getVendorId() == HONOR_USB_VENDOR_ID) return null;
+    // 兼容确实不提供序列号的旧设备，同时避免使用会变化的 deviceName。
+    return "usb-" + Integer.toHexString(usbDevice.getVendorId())
+            + "-" + Integer.toHexString(usbDevice.getProductId());
   }
 
   private static String describeUsbDevice(UsbDevice usbDevice) {

@@ -30,7 +30,7 @@ public final class Setting {
   }
 
   public int getDefaultMaxSize() {
-    return sharedPreferences.getInt("defaultMaxSize", 1600);
+    return sharedPreferences.getInt("defaultMaxSize", 1920);
   }
 
   public void setDefaultMaxSize(int value) {
@@ -39,7 +39,7 @@ public final class Setting {
   }
 
   public int getDefaultMaxFps() {
-    return sharedPreferences.getInt("defaultMaxFps", 60);
+    return sharedPreferences.getInt("defaultMaxFps", 40);
   }
 
   public void setDefaultMaxFps(int value) {
@@ -48,7 +48,7 @@ public final class Setting {
   }
 
   public int getDefaultMaxVideoBit() {
-    return sharedPreferences.getInt("defaultMaxVideoBit", 4);
+    return sharedPreferences.getInt("defaultMaxVideoBit", 8);
   }
 
   public void setDefaultMaxVideoBit(int value) {

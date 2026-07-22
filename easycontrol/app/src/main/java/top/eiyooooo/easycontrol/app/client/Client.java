@@ -19,6 +19,8 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import android.view.Surface;
 import android.view.View;
@@ -41,6 +43,7 @@ import top.eiyooooo.easycontrol.app.buffer.BufferStream;
 import top.eiyooooo.easycontrol.app.client.view.ClientView;
 
 public class Client {
+  private static final int HONOR_USB_VENDOR_ID = 0x339b;
   private static final String AUDIO_LOG_TAG = "EasycontrolAudio";
   private static final String DISPLAY_LOG_TAG = "EasycontrolDisplay";
   private static final String TRANSPORT_LOG_TAG = "EasycontrolTransport";
@@ -107,6 +110,10 @@ public class Client {
           + sessionId.substring(0, 8);
   public final boolean embeddedMode;
   private final boolean usbTransport;
+  private final boolean honorUsbTransport;
+  private volatile String honorWifiAddress;
+  private volatile boolean honorTcpFallbackActive;
+  private volatile boolean honorTcpSwitchInProgress;
   // 0 为屏幕镜像模式，1 为应用流转模式。
   public volatile int mode = 0;
   public volatile int displayId = 0;
@@ -212,6 +219,7 @@ public class Client {
     uuid = device.uuid;
     this.embeddedMode = embeddedMode;
     usbTransport = usbDevice != null;
+    honorUsbTransport = usbDevice != null && usbDevice.getVendorId() == HONOR_USB_VENDOR_ID;
     // 如果指定了转移模式，就先标记为已转移。
     if (mode == 0) specifiedTransferred = true;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -269,6 +277,10 @@ public class Client {
     startThread = new Thread(() -> {
       try {
         adb = connectADB(device, usbDevice);
+        if (honorUsbTransport) {
+          discoverHonorWifiAddress();
+          switchHonorUsbToTcp();
+        }
         changeMode(mode);
         changeMultiLinkMode(multiLink);
         startServer(device);
@@ -317,11 +329,71 @@ public class Client {
     });
   }
 
+  private void discoverHonorWifiAddress() {
+    try {
+      String output = adb.runAdbCmd("ip -o -4 addr show wlan0");
+      Matcher matcher = Pattern.compile("\\binet\\s+([0-9]+(?:\\.[0-9]+){3})/")
+              .matcher(output);
+      if (matcher.find()) {
+        honorWifiAddress = matcher.group(1) + ":5555";
+        Log.i(TRANSPORT_LOG_TAG, "Honor USB video fallback candidate uuid=" + uuid
+                + ", address=" + honorWifiAddress);
+      } else {
+        Log.i(TRANSPORT_LOG_TAG, "Honor USB video fallback unavailable uuid=" + uuid
+                + ", wlan0=" + output.trim());
+      }
+    } catch (Exception e) {
+      Log.w(TRANSPORT_LOG_TAG, "Honor USB video fallback discovery failed uuid=" + uuid, e);
+    }
+  }
+
+  private void switchHonorUsbToTcp() throws Exception {
+    String address = honorWifiAddress;
+    if (address == null || address.isEmpty()) return;
+
+    honorTcpSwitchInProgress = true;
+    Adb usbAdb = adb;
+    Exception restartFailure = null;
+    try {
+      String response = usbAdb.restartOnTcpip(5555);
+      Log.i(TRANSPORT_LOG_TAG, "Honor ADB tcpip restart requested uuid=" + uuid
+              + ", response=" + response.trim());
+    } catch (Exception e) {
+      restartFailure = e;
+      Log.w(TRANSPORT_LOG_TAG, "Honor ADB tcpip restart response interrupted uuid=" + uuid, e);
+    } finally {
+      usbAdb.close();
+    }
+
+    Exception connectFailure = null;
+    for (int attempt = 1; attempt <= 12; attempt++) {
+      try {
+        Thread.sleep(Math.min(1_000L, attempt * 200L));
+        adb = Adb.getOrCreate(uuid, () -> new Adb(uuid, address, AppData.keyPair));
+        honorTcpFallbackActive = true;
+        honorTcpSwitchInProgress = false;
+        Log.i(TRANSPORT_LOG_TAG, "Honor transport switched USB->WiFi uuid=" + uuid
+                + ", address=" + address + ", attempt=" + attempt);
+        return;
+      } catch (Exception e) {
+        connectFailure = e;
+      }
+    }
+    IOException failure = new IOException("Honor WiFi ADB fallback failed for " + address,
+            connectFailure);
+    if (restartFailure != null) failure.addSuppressed(restartFailure);
+    honorTcpSwitchInProgress = false;
+    throw failure;
+  }
+
+  public boolean shouldIgnoreUsbDetach() {
+    return honorUsbTransport && (honorTcpSwitchInProgress || honorTcpFallbackActive);
+  }
+
   // 启动服务端 JAR。
   private void startServer(Device device) throws Exception {
     adb.ensureServerStarted();
     resolveFlowAudioTarget(device);
-    shell = adb.getShell();
     int ScreenMode = (AppData.setting.getTurnOnScreenIfStart() ? 1 : 0) * 1000
             + (AppData.setting.getTurnOffScreenIfStart() ? 1 : 0) * 100
             + (AppData.setting.getTurnOffScreenIfStop() ? 1 : 0) * 10
@@ -331,9 +403,12 @@ public class Client {
     // -Djava.class.path 的处理不稳定，会在类加载阶段直接 SIGABRT。
     cmd.append("CLASSPATH=").append(serverName).append(" app_process / top.eiyooooo.easycontrol.server.Scrcpy");
     cmd.append(" socketName=").append(serverSocketName);
-    boolean startAudio = shouldStartServerAudio(device);
+    // 荣耀 USB gadget 在部分 Android 11 车机 Host 上无法稳定承载双路音频和视频的
+    // 并发 ADB WRTE/OKAY。优先保证镜像画面；WiFi 连接仍保留完整音频能力。
+    boolean startAudio = shouldStartServerAudio(device) && !honorUsbTransport;
     Log.i(AUDIO_LOG_TAG, "audio start decision " + audioClientDescription()
             + ", deviceAudio=" + device.isAudio
+            + ", honorUsbVideoOnly=" + honorUsbTransport
             + ", enabled=" + startAudio);
     if (!startAudio) cmd.append(" isAudio=0");
     else {
@@ -347,26 +422,36 @@ public class Client {
         cmd.append(" audioFallback=").append(multiLink == 2 ? 0 : 1);
       }
     }
-    if (device.maxSize != 1600) cmd.append(" maxSize=").append(device.maxSize);
-    if (device.maxFps != 60) cmd.append(" maxFps=").append(device.maxFps);
-    if (device.maxVideoBit != 4) cmd.append(" maxVideoBit=").append(device.maxVideoBit);
+    // 荣耀 USB gadget 在这类 Android 11 Host 上对大 ADB WRTE 帧很敏感。首帧使用
+    // H.265 时会在视频握手之后卡住，连心跳也无法继续传输。仅对荣耀 USB 会话使用
+    // 更小的 H.264 传输档位，WiFi 和其他品牌仍完全遵循设备画质设置。
+    int serverMaxSize = honorUsbTransport ? Math.min(device.maxSize, 1280) : device.maxSize;
+    int serverMaxFps = honorUsbTransport ? Math.min(device.maxFps, 30) : device.maxFps;
+    int serverMaxVideoBit = honorUsbTransport ? Math.min(device.maxVideoBit, 2) : device.maxVideoBit;
+    boolean serverUseH265 = !honorUsbTransport && device.useH265 && supportH265;
+    if (serverMaxSize != 1600) cmd.append(" maxSize=").append(serverMaxSize);
+    if (serverMaxFps != 60) cmd.append(" maxFps=").append(serverMaxFps);
+    if (serverMaxVideoBit != 4) cmd.append(" maxVideoBit=").append(serverMaxVideoBit);
     if (displayId != 0) cmd.append(" displayId=").append(displayId);
     if (AppData.setting.getNewMirrorMode()) cmd.append(" mirrorMode=1");
     if (!AppData.setting.getKeepAwake()) cmd.append(" keepAwake=0");
     if (ScreenMode != 1001) cmd.append(" ScreenMode=").append(ScreenMode);
-    if (!(device.useH265 && supportH265)) cmd.append(" useH265=0");
+    if (!serverUseH265) cmd.append(" useH265=0");
     if (!(device.useOpus && supportOpus)) cmd.append(" useOpus=0");
     Log.i(VIDEO_LOG_TAG, "video start request uuid=" + uuid
-            + ", transport=" + (usbTransport ? "USB" : "WiFi")
+            + ", transport=" + (honorTcpFallbackActive ? "WiFi(USB-bootstrap)"
+            : usbTransport ? "USB" : "WiFi")
             + ", mode=" + mode
             + ", embedded=" + embeddedMode
             + ", socketName=" + serverSocketName
-            + ", maxSize=" + device.maxSize
-            + ", targetFps=" + device.maxFps
-            + ", targetMbps=" + device.maxVideoBit
-            + ", codec=" + (device.useH265 && supportH265 ? "H265" : "H264"));
-    cmd.append(" \n");
-    shell.write(ByteBuffer.wrap(cmd.toString().getBytes()));
+            + ", maxSize=" + serverMaxSize
+            + ", targetFps=" + serverMaxFps
+            + ", targetMbps=" + serverMaxVideoBit
+            + ", codec=" + (serverUseH265 ? "H265" : "H264")
+            + ", honorUsbSafeProfile=" + honorUsbTransport);
+    // 直接把完整命令交给 ADB shell service。荣耀的交互 shell 会回显命令，却可能不执行
+    // app_process，最终等到 socket 超时；非交互启动也与标准 adb/scrcpy 路径一致。
+    shell = adb.getShell(cmd.toString());
     logger();
   }
 
@@ -433,6 +518,7 @@ public class Client {
           String log = new String(shell.readAllBytes().array(), StandardCharsets.UTF_8);
           if (!log.isEmpty()) {
             L.logWithoutTime(uuid, log);
+            logServerStartupLines(log);
             logServerAudioLines(log);
           }
           Thread.sleep(1000);
@@ -441,6 +527,19 @@ public class Client {
       }
     });
     loggerThread.start();
+  }
+
+  private void logServerStartupLines(String serverLog) {
+    for (String line : serverLog.split("\\r?\\n")) {
+      String normalized = line.toLowerCase(Locale.ROOT);
+      if (normalized.contains("scrcpy stage=")
+              || normalized.contains("startscrcpy error")
+              || normalized.contains("exception")
+              || normalized.contains("fatal")
+              || normalized.contains("failed")) {
+        Log.i("EasycontrolServer", "uuid=" + uuid + " | " + line);
+      }
+    }
   }
 
   private void logServerAudioLines(String serverLog) {
@@ -976,13 +1075,22 @@ public class Client {
     Thread.sleep(50);
     Adb pendingVideoAdb = null;
     try {
-      if (!usbTransport) {
-        pendingVideoAdb = Adb.createAuxiliaryTcp(
-                uuid + "-video-" + sessionId.substring(0, 8),
-                clientView.device.address,
-                AppData.keyPair);
-        Log.i(TRANSPORT_LOG_TAG, "WiFi split transport ready uuid=" + uuid
-                + ", control=primary, video=auxiliary");
+      String videoAddress = !usbTransport ? clientView.device.address : honorWifiAddress;
+      if (videoAddress != null && !videoAddress.isEmpty()) {
+        try {
+          pendingVideoAdb = Adb.createAuxiliaryTcp(
+                  uuid + "-video-" + sessionId.substring(0, 8),
+                  videoAddress,
+                  AppData.keyPair);
+          Log.i(TRANSPORT_LOG_TAG, "WiFi split transport ready uuid=" + uuid
+                  + ", control=" + (usbTransport ? "USB" : "primary WiFi")
+                  + ", video=auxiliary WiFi, address=" + videoAddress);
+        } catch (Exception e) {
+          if (!honorUsbTransport) throw e;
+          Log.w(TRANSPORT_LOG_TAG, "Honor auxiliary WiFi video unavailable; using USB uuid="
+                  + uuid + ", address=" + videoAddress, e);
+          pendingVideoAdb = null;
+        }
       }
 
       for (int i = 0; i < serverSocketConnectAttempts; i++) {

@@ -9,6 +9,9 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
 /**
  * 类 TcpChannel
  * 说明：该类负责 TcpChannel 相关功能。
@@ -19,10 +22,15 @@ public class TcpChannel implements AdbChannel {
   private static final int TCP_BUFFER_SIZE = 1024 * 1024;
 
   private final Socket socket = new Socket();
-  private final InputStream inputStream;
-  private final OutputStream outputStream;
+  private final String host;
+  private final int port;
+  private volatile InputStream inputStream;
+  private volatile OutputStream outputStream;
+  private volatile SSLSocket tlsSocket;
 
   public TcpChannel(String host, int port, boolean test) throws IOException {
+    this.host = host;
+    this.port = port;
     socket.setReceiveBufferSize(TCP_BUFFER_SIZE);
     socket.setSendBufferSize(TCP_BUFFER_SIZE);
     socket.setTcpNoDelay(true);
@@ -36,6 +44,22 @@ public class TcpChannel implements AdbChannel {
             + ", receiveBuffer=" + socket.getReceiveBufferSize()
             + ", sendBuffer=" + socket.getSendBufferSize()
             + ", tcpNoDelay=" + socket.getTcpNoDelay());
+  }
+
+  /** Upgrades the already connected ADB socket after both peers exchange STLS. */
+  public synchronized void upgradeToTls(AdbKeyPair keyPair) throws Exception {
+    if (tlsSocket != null) return;
+    SSLContext sslContext = AdbPairManager.createSslContext(keyPair);
+    SSLSocket upgraded = (SSLSocket) sslContext.getSocketFactory()
+            .createSocket(socket, host, port, true);
+    upgraded.setUseClientMode(true);
+    upgraded.startHandshake();
+    inputStream = upgraded.getInputStream();
+    outputStream = upgraded.getOutputStream();
+    tlsSocket = upgraded;
+    Log.i(TRANSPORT_LOG_TAG, "ADB TLS 1.3 established address=" + host + ":" + port
+            + ", protocol=" + upgraded.getSession().getProtocol()
+            + ", cipher=" + upgraded.getSession().getCipherSuite());
   }
 
   @Override
@@ -76,6 +100,10 @@ public class TcpChannel implements AdbChannel {
     }
     try {
       inputStream.close();
+    } catch (Exception ignored) {
+    }
+    try {
+      if (tlsSocket != null) tlsSocket.close();
     } catch (Exception ignored) {
     }
     try {

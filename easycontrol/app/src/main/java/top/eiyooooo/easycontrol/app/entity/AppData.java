@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.util.Base64;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Display;
 import android.view.WindowManager;
 
@@ -25,6 +26,7 @@ import top.eiyooooo.easycontrol.app.helper.EventMonitor;
 import top.eiyooooo.easycontrol.app.helper.MyBroadcastReceiver;
 
 public class AppData {
+  private static final String ADB_IDENTITY_LOG_TAG = "EasycontrolAdbIdentity";
   @SuppressLint("StaticFieldLeak")
   public static Context main;
   @SuppressLint("StaticFieldLeak")
@@ -64,6 +66,11 @@ public class AppData {
     if (main != null) return;
     main = m.getApplicationContext();
     dbHelper = new DbHelper(main);
+    int removedTransientUsbDevices = dbHelper.deleteTransientUsbDevices();
+    if (removedTransientUsbDevices > 0) {
+      Log.i("EasycontrolUsb", "Removed transient USB device records: "
+              + removedTransientUsbDevices);
+    }
     clipBoard = (ClipboardManager) main.getSystemService(Context.CLIPBOARD_SERVICE);
     wifiManager = (WifiManager) main.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
     usbManager = (UsbManager) main.getSystemService(Context.USB_SERVICE);
@@ -76,10 +83,14 @@ public class AppData {
       uiHandler.postDelayed(() -> EventMonitor.monitorEventsList = dbHelper.getAllMonitorEvents(), 1000);
     }
     nightMode = uiModeManager.getNightMode();
+    // USB 自动连接线程会立即使用 keyPair；必须先完成身份加载。
+    loadAdbKeyPair();
     myBroadcastReceiver.register(main);
     if (setting.getEnableUSB()) myBroadcastReceiver.checkConnectedUsb(main);
     getRealScreenSize(m);
-    // 读取密钥文件
+  }
+
+  private static void loadAdbKeyPair() {
     try {
       AdbKeyPair.setAdbBase64(new AdbBase64() {
         @Override
@@ -96,7 +107,8 @@ public class AppData {
       File publicKey = new File(main.getApplicationContext().getFilesDir(), "public.key");
       if (!privateKey.isFile() || !publicKey.isFile()) AdbKeyPair.generate(privateKey, publicKey);
       keyPair = AdbKeyPair.read(privateKey, publicKey);
-    } catch (Exception ignored) {
+    } catch (Exception e) {
+      Log.e(ADB_IDENTITY_LOG_TAG, "Unable to load ADB identity; regenerating", e);
       reGenerateAdbKeyPair(main);
     }
   }
@@ -117,7 +129,9 @@ public class AppData {
       File publicKey = new File(context.getApplicationContext().getFilesDir(), "public.key");
       AdbKeyPair.generate(privateKey, publicKey);
       AppData.keyPair = AdbKeyPair.read(privateKey, publicKey);
-    } catch (Exception ignored) {
+    } catch (Exception e) {
+      AppData.keyPair = null;
+      Log.e(ADB_IDENTITY_LOG_TAG, "Unable to regenerate ADB identity", e);
     }
   }
 

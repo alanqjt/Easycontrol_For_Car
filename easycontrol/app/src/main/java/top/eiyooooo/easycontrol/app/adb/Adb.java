@@ -49,7 +49,11 @@ public class Adb {
   private final boolean tcpTransport;
   private final AtomicInteger localIdPool = new AtomicInteger(1);
   private int MAX_DATA = AdbProtocol.CONNECT_MAXDATA;
+  private int receiveMaxData = AdbProtocol.CONNECT_MAXDATA;
+  private int protocolVersion = AdbProtocol.CONNECT_VERSION;
+  private volatile boolean tlsTransport;
   private final ConcurrentHashMap<Integer, BufferStream> connectionStreams = new ConcurrentHashMap<>(10);
+  private final ConcurrentHashMap<Integer, Integer> streamRemoteIds = new ConcurrentHashMap<>(10);
   private final ConcurrentHashMap<Integer, BufferStream> openStreams = new ConcurrentHashMap<>(5);
   private final Buffer sendBuffer = new Buffer();
   private final Object serverRequestLock = new Object();
@@ -78,9 +82,50 @@ public class Adb {
   private Adb(String uuid, String address, AdbKeyPair keyPair, boolean startServer) throws Exception {
     this.uuid = uuid;
     Pair<String, Integer> addressPair = PublicTools.getIpAndPort(address);
-    channel = new TcpChannel(addressPair.first, addressPair.second, false);
+    channel = createTcpChannel(addressPair.first, addressPair.second, false);
     tcpTransport = true;
     initializeConnection(keyPair, startServer);
+  }
+
+  private static TcpChannel createTcpChannel(String host, int port, boolean test) throws IOException {
+    IOException directFailure;
+    try {
+      return new TcpChannel(host, port, test);
+    } catch (IOException e) {
+      directFailure = e;
+    }
+
+    AdbTlsEndpointResolver.Endpoint cached = AdbTlsEndpointResolver.getCached(host);
+    if (cached != null && !cached.isSame(host, port)) {
+      try {
+        Log.i(TRANSPORT_LOG_TAG, "ADB direct TCP failed; trying cached TLS endpoint="
+                + cached.host + ":" + cached.port);
+        return new TcpChannel(cached.host, cached.port, test);
+      } catch (IOException cachedFailure) {
+        directFailure.addSuppressed(cachedFailure);
+        AdbTlsEndpointResolver.invalidate(host, cached);
+      }
+    }
+
+    try {
+      AdbTlsEndpointResolver.Endpoint discovered = AdbTlsEndpointResolver.resolve(
+              AppData.main, host, 2_500);
+      if (discovered == null || discovered.isSame(host, port)) throw directFailure;
+      Log.i(TRANSPORT_LOG_TAG, "ADB direct TCP failed; discovered wireless TLS endpoint="
+              + discovered.host + ":" + discovered.port);
+      try {
+        return new TcpChannel(discovered.host, discovered.port, test);
+      } catch (IOException tlsFailure) {
+        tlsFailure.addSuppressed(directFailure);
+        AdbTlsEndpointResolver.invalidate(host, discovered);
+        throw tlsFailure;
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      IOException interrupted = new IOException("Interrupted while discovering ADB TLS endpoint", e);
+      interrupted.addSuppressed(directFailure);
+      throw interrupted;
+    }
   }
 
   /**
@@ -97,7 +142,7 @@ public class Adb {
   public Adb(String address, AdbKeyPair keyPair) throws Exception {
     this.uuid = null;
     Pair<String, Integer> addressPair = PublicTools.getIpAndPort(address);
-    channel = new TcpChannel(addressPair.first, addressPair.second, true);
+    channel = createTcpChannel(addressPair.first, addressPair.second, true);
     tcpTransport = true;
     initializeConnection(keyPair, false);
   }
@@ -110,11 +155,17 @@ public class Adb {
   }
 
   private void initializeConnection(AdbKeyPair keyPair, boolean startServer) throws Exception {
+    if (keyPair == null) throw new IOException("ADB identity is unavailable");
     boolean initialized = false;
     try {
       connect(keyPair);
       if (startServer) startServerThread.start();
       initialized = true;
+    } catch (Exception e) {
+      Log.e(TRANSPORT_LOG_TAG, "ADB initialization failed connection=" + uuid
+              + ", transport=" + (tcpTransport ? "WiFi" : "USB"), e);
+      L.log(uuid, e);
+      throw e;
     } finally {
       // 构造阶段抛错时对象不会交给调用方，必须在这里释放 USB 接口或 TCP socket。
       if (!initialized) channel.close();
@@ -126,14 +177,28 @@ public class Adb {
     L.log(uuid, "ADB handshake begin");
     int advertisedMaxData = tcpTransport
             ? AdbProtocol.CONNECT_MAXDATA_TCP
+            : channel instanceof UsbChannel
+            ? ((UsbChannel) channel).getPreferredReceiveMaxData()
             : AdbProtocol.CONNECT_MAXDATA;
+    int advertisedVersion = tcpTransport
+            ? AdbProtocol.CONNECT_VERSION
+            : AdbProtocol.CONNECT_VERSION_MIN;
+    receiveMaxData = advertisedMaxData;
+    protocolVersion = advertisedVersion;
     Log.i(TRANSPORT_LOG_TAG, "ADB handshake connection=" + uuid
             + ", transport="
             + (tcpTransport ? "WiFi" : "USB")
+            + ", advertisedVersion=0x" + Integer.toHexString(advertisedVersion)
             + ", advertisedMaxData=" + advertisedMaxData);
-    channel.write(AdbProtocol.generateConnect(advertisedMaxData));
+    channel.write(AdbProtocol.generateConnect(advertisedVersion, advertisedMaxData));
     channel.flush();
     AdbProtocol.AdbMessage message = completeHandshake(keyPair);
+    if (message.arg0 < AdbProtocol.CONNECT_VERSION_MIN) {
+      channel.close();
+      throw new IOException("invalid ADB protocol version: 0x"
+              + Integer.toHexString(message.arg0));
+    }
+    protocolVersion = Math.min(AdbProtocol.CONNECT_VERSION, message.arg0);
     if (message.arg1 <= 128 || message.arg1 > AdbProtocol.MAX_ADB_PAYLOAD_LENGTH) {
       channel.close();
       throw new IOException("invalid ADB max payload: " + message.arg1);
@@ -144,7 +209,9 @@ public class Adb {
             + ", transport="
             + (tcpTransport ? "WiFi" : "USB")
             + ", advertisedMaxData=" + advertisedMaxData
-            + ", remoteMaxData=" + MAX_DATA);
+            + ", remoteMaxData=" + MAX_DATA
+            + ", protocol=0x" + Integer.toHexString(protocolVersion)
+            + ", tls=" + tlsTransport);
     if (uuid == null) {
       channel.close();
       return;
@@ -176,9 +243,14 @@ public class Adb {
         quietSince = 0;
       }
 
-      AdbProtocol.AdbMessage message = AdbProtocol.AdbMessage.parseAdbMessage(channel);
+      AdbProtocol.AdbMessage message = AdbProtocol.AdbMessage.parseAdbMessage(
+              channel, protocolVersion, receiveMaxData);
       packetCount++;
       L.log(uuid, "ADB handshake received command=" + commandName(message.command)
+              + ", arg0=" + message.arg0 + ", arg1=" + message.arg1
+              + ", payload=" + message.payloadLength);
+      Log.i(TRANSPORT_LOG_TAG, "ADB handshake received connection=" + uuid
+              + ", command=" + commandName(message.command)
               + ", arg0=" + message.arg0 + ", arg1=" + message.arg1
               + ", payload=" + message.payloadLength);
 
@@ -205,6 +277,25 @@ public class Adb {
                   keyPair.publicKeyBytes));
         }
         channel.flush();
+        continue;
+      }
+
+      if (message.command == AdbProtocol.CMD_STLS) {
+        connected = null;
+        quietSince = 0;
+        if (!tcpTransport || !(channel instanceof TcpChannel)) {
+          throw new IOException("ADB STLS received on a non-TCP transport");
+        }
+        if (message.arg0 < AdbProtocol.STLS_VERSION) {
+          throw new IOException("unsupported ADB STLS version: 0x"
+                  + Integer.toHexString(message.arg0));
+        }
+        L.log(uuid, "ADB STLS requested; starting TLS 1.3 handshake");
+        channel.write(AdbProtocol.generateStls());
+        channel.flush();
+        ((TcpChannel) channel).upgradeToTls(keyPair);
+        tlsTransport = true;
+        signatureSent = false;
         continue;
       }
 
@@ -683,6 +774,20 @@ public class Adb {
     return open("shell:", true);
   }
 
+  /**
+   * Execute a long-running command through the non-interactive ADB shell service.
+   *
+   * <p>Some vendor shells, notably Honor, echo input written to an interactive {@code shell:}
+   * stream but do not reliably execute {@code app_process}. Passing the command in the OPEN
+   * destination matches the normal adb/scrcpy launch path and avoids terminal line discipline.</p>
+   */
+  public BufferStream getShell(String command) throws InterruptedException {
+    if (command == null || command.isEmpty()) {
+      throw new IllegalArgumentException("shell command must not be empty");
+    }
+    return open("shell:" + command, true);
+  }
+
   public BufferStream tcpForward(int port) throws IOException, InterruptedException {
     BufferStream bufferStream = open("tcp:" + port, true);
     if (bufferStream.isClosed()) throw new IOException("error forward");
@@ -698,7 +803,8 @@ public class Adb {
   private void handleIn() {
     try {
       while (!Thread.interrupted()) {
-        AdbProtocol.AdbMessage message = AdbProtocol.AdbMessage.parseAdbMessage(channel);
+        AdbProtocol.AdbMessage message = AdbProtocol.AdbMessage.parseAdbMessage(
+                channel, protocolVersion, receiveMaxData);
         if (message.command != AdbProtocol.CMD_OKAY
                 && message.command != AdbProtocol.CMD_WRTE
                 && message.command != AdbProtocol.CMD_CLSE) {
@@ -709,13 +815,26 @@ public class Adb {
           throw new IOException("ADB stream packet has invalid localId=0, command="
                   + commandName(message.command));
         }
+        if (message.command != AdbProtocol.CMD_WRTE && message.payloadLength != 0) {
+          throw new IOException("ADB stream control packet contains a payload, command="
+                  + commandName(message.command));
+        }
         BufferStream bufferStream = connectionStreams.get(message.arg1);
         boolean isNeedNotify = bufferStream == null;
-        // 新连接
+        // 只有 OKAY 或 CLSE 可以作为本地主动 OPEN 的首个响应。
         if (isNeedNotify) {
+          if (message.command == AdbProtocol.CMD_WRTE) {
+            throw new IOException("ADB WRTE received for unknown localId=" + message.arg1);
+          }
           L.log(uuid, "ADB OPEN response command=" + commandName(message.command)
                   + ", localId=" + message.arg1 + ", remoteId=" + message.arg0);
           bufferStream = createNewStream(message.arg1, message.arg0, message.arg1 > 0);
+        } else {
+          Integer expectedRemoteId = streamRemoteIds.get(message.arg1);
+          if (expectedRemoteId != null && message.arg0 != expectedRemoteId) {
+            throw new IOException("ADB stream remoteId changed: localId=" + message.arg1
+                    + ", expected=" + expectedRemoteId + ", actual=" + message.arg0);
+          }
         }
         switch (message.command) {
           case AdbProtocol.CMD_OKAY:
@@ -723,7 +842,7 @@ public class Adb {
             break;
           case AdbProtocol.CMD_WRTE:
             recordIncomingWrite(message.payloadLength);
-            bufferStream.pushSource(message.payload);
+            if (message.payloadLength > 0) bufferStream.pushSource(message.payload);
             // ADB 每个 WRTE 都要等待 OKAY。优先回执，避免大视频帧阻塞后续音频和视频包。
             sendBuffer.writeFirst(AdbProtocol.generateOkay(message.arg1, message.arg0));
             break;
@@ -740,6 +859,8 @@ public class Adb {
       }
     } catch (Exception e) {
       if (!closing) {
+        Log.e(TRANSPORT_LOG_TAG, "ADB receive loop failed connection=" + uuid
+                + ", transport=" + (tcpTransport ? "WiFi" : "USB"), e);
         L.log(uuid, e);
         PublicTools.logToast(AppData.main.getString(R.string.log_notify));
       }
@@ -783,6 +904,8 @@ public class Adb {
       }
     } catch (Exception e) {
       if (!closing) {
+        Log.e(TRANSPORT_LOG_TAG, "ADB send loop failed connection=" + uuid
+                + ", transport=" + (tcpTransport ? "WiFi" : "USB"), e);
         L.log(uuid, e);
         PublicTools.logToast(AppData.main.getString(R.string.log_notify));
       }
@@ -796,6 +919,7 @@ public class Adb {
       @Override
       public void connect(BufferStream bufferStream) {
         connectionStreams.put(localId, bufferStream);
+        if (remoteId != 0) streamRemoteIds.put(localId, remoteId);
         openStreams.put(localId, bufferStream);
       }
 
@@ -814,6 +938,7 @@ public class Adb {
       @Override
       public void close(BufferStream bufferStream) {
         connectionStreams.remove(localId);
+        streamRemoteIds.remove(localId);
         sendBuffer.write(AdbProtocol.generateClose(localId, remoteId));
       }
     });
@@ -828,6 +953,7 @@ public class Adb {
     if (command == AdbProtocol.CMD_OKAY) return "OKAY";
     if (command == AdbProtocol.CMD_CLSE) return "CLSE";
     if (command == AdbProtocol.CMD_WRTE) return "WRTE";
+    if (command == AdbProtocol.CMD_STLS) return "STLS";
     return "0x" + Integer.toHexString(command);
   }
 
