@@ -5,6 +5,7 @@ import android.os.Build;
 public final class Options {
     public static String socketName = "easycontrol_for_car_scrcpy";
     public static boolean isAudio = true;
+    public static boolean isVideo = true;
     public static int maxSize = 1600;
     public static int maxVideoBit = 4000000;
     public static int maxFps = 60;
@@ -43,6 +44,9 @@ public final class Options {
                     break;
                 case "isAudio":
                     isAudio = Integer.parseInt(value) == 1;
+                    break;
+                case "isVideo":
+                    isVideo = Integer.parseInt(value) == 1;
                     break;
                 case "maxSize":
                     maxSize = Integer.parseInt(value);

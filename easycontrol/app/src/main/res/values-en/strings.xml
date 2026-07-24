@@ -287,6 +287,34 @@
   <string name="music_navigation_device_unavailable">The device is currently unavailable.</string>
   <string name="music_navigation_default_navigation">Amap</string>
   <string name="music_navigation_default_music">QQ Music</string>
+  <string name="music_navigation_display_mode">Right-side music display</string>
+  <string name="music_navigation_phone_screen">Phone music screen</string>
+  <string name="music_navigation_large_card">Large-text music card</string>
+  <string name="music_navigation_large_card_detail">Music starts on the phone. The head unit only receives audio and media info, and does not launch a local music app.</string>
+  <string name="music_card_header">Phone music</string>
+  <string name="music_card_waiting_title">Waiting for phone music</string>
+  <string name="music_card_waiting_detail">Start playback in the phone music app</string>
+  <string name="music_card_connection_error">Song information is temporarily unavailable</string>
+  <string name="music_card_previous">Previous</string>
+  <string name="music_card_play">Play</string>
+  <string name="music_card_pause">Pause</string>
+  <string name="music_card_next">Next</string>
+  <string name="music_card_album_unknown">Music playing on phone</string>
+  <string name="music_card_lyrics_waiting">Loading lyrics…</string>
+  <string name="music_card_lyrics_unavailable">Lyrics unavailable</string>
+  <string name="music_card_playback_mode">Playback mode</string>
+  <string name="music_card_mode_random">Shuffle</string>
+  <string name="music_card_mode_order">Play in order</string>
+  <string name="music_card_mode_single">Repeat one</string>
+  <string name="music_card_mode_failed">The phone music app did not change playback mode</string>
+  <string name="music_card_queue">Play queue</string>
+  <string name="music_card_queue_count">Play queue · %1$d songs</string>
+  <string name="music_card_queue_loading">Loading phone play queue…</string>
+  <string name="music_card_queue_unavailable">QQ Music did not expose its play queue</string>
+  <string name="music_card_queue_failed">Failed to load play queue</string>
+  <string name="music_card_queue_empty">Play queue is empty</string>
+  <string name="music_card_queue_unknown">Unknown song</string>
+  <string name="music_card_close">Close</string>
 
   <!-- Embedded projection -->
   <string name="embedded_projection_connecting">Connecting to device</string>

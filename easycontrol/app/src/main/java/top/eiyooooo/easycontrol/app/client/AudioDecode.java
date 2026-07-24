@@ -78,6 +78,7 @@ public class AudioDecode {
   private AudioManager audioManager;
   private AudioFocusRequest navigationFocusRequest;
   private volatile boolean released = false;
+  private volatile float playbackVolume = 1f;
   // 媒体允许最多积压约 480ms；导航不丢包，避免播报开头或结尾缺字。
   private static final int MAX_PENDING_AUDIO_FRAMES = 24;
   // 车机端音频线程和视频解码经常抢资源，播放缓冲放大到 4 倍比 2 倍更稳。
@@ -274,6 +275,24 @@ public class AudioDecode {
     }
   }
 
+  /**
+   * 直接控制当前媒体轨音量。导航播报压低由应用内完成，不依赖厂商 AudioFocus 策略。
+   */
+  public void setPlaybackVolume(float volume) {
+    float safeVolume = Math.max(0f, Math.min(1f, volume));
+    synchronized (codecLock) {
+      playbackVolume = safeVolume;
+      if (released || audioTrack == null
+              || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
+      try {
+        audioTrack.setVolume(safeVolume);
+      } catch (RuntimeException error) {
+        Log.w(TAG, "AudioTrack volume change failed role=" + roleName(audioRole)
+                + ", volume=" + safeVolume, error);
+      }
+    }
+  }
+
   private void safeStartAudioTrack() {
     synchronized (codecLock) {
       if (released || !shouldPlay || audioTrack == null || audioTrack.getState() != AudioTrack.STATE_INITIALIZED) return;
@@ -401,6 +420,8 @@ public class AudioDecode {
   private void setAudioTrack() {
     // 播放端同样使用 48kHz，避免解码后还要做额外重采样。
     int sampleRate = 48000;
+    int configuredUsage = AudioAttributes.USAGE_MEDIA;
+    int configuredContentType = AudioAttributes.CONTENT_TYPE_MUSIC;
     // 在系统建议的最小缓冲基础上再放大，优先解决车机端 AudioTrack underrun 导致的卡顿/吞字。
     int minBufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
     if (minBufferSize <= 0) minBufferSize = getFallbackAudioTrackBufferSize(sampleRate);
@@ -413,12 +434,14 @@ public class AudioDecode {
       int audioChannel = AppData.setting.getAudioChannel();
       if (audioChannel != 0) audioAttributesBulider.setLegacyStreamType(audioChannel);
       if (audioRole == ROLE_NAVIGATION) {
-        audioAttributesBulider.setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE);
-        audioAttributesBulider.setContentType(AudioAttributes.CONTENT_TYPE_SPEECH);
+        configuredUsage = AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE;
+        configuredContentType = AudioAttributes.CONTENT_TYPE_SPEECH;
       } else {
-        audioAttributesBulider.setUsage(AudioAttributes.USAGE_MEDIA);
-        audioAttributesBulider.setContentType(AudioAttributes.CONTENT_TYPE_MUSIC);
+        configuredUsage = AudioAttributes.USAGE_MEDIA;
+        configuredContentType = AudioAttributes.CONTENT_TYPE_MUSIC;
       }
+      audioAttributesBulider.setUsage(configuredUsage);
+      audioAttributesBulider.setContentType(configuredContentType);
       // 音频格式必须和解码后的 PCM 一致，避免播放端再做额外转换。
       AudioFormat.Builder audioFormat = new AudioFormat.Builder();
       audioFormat.setEncoding(AudioFormat.ENCODING_PCM_16BIT);
@@ -440,14 +463,17 @@ public class AudioDecode {
       // 老版本系统退回到传统构造方式，保持兼容性。
       audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
     }
+    setPlaybackVolume(playbackVolume);
     Log.i(TAG, "AudioTrack ready role=" + roleName(audioRole)
             + ", state=" + audioTrack.getState()
             + ", sessionId=" + audioTrack.getAudioSessionId()
             + ", minBufferBytes=" + minBufferSize
             + ", bufferBytes=" + bufferSize
             + ", bufferFrames=" + getAudioTrackBufferFrames()
-            + ", usage=" + audioTrack.getAudioAttributes().getUsage()
-            + ", contentType=" + audioTrack.getAudioAttributes().getContentType()
+            // 部分旧车机 ROM 即使能创建 AudioTrack，也缺少 getAudioAttributes()。
+            // 直接记录创建时使用的值，避免 NoSuchMethodError 杀死整个进程。
+            + ", usage=" + configuredUsage
+            + ", contentType=" + configuredContentType
             + ", loudnessEnhancer=disabled-to-avoid-clipping");
   }
 

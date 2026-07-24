@@ -90,6 +90,9 @@ public final class Workarounds {
             // ConfigurationController was introduced in Android 12, so do not attempt to set it on lower versions.
             // <https://github.com/Genymobile/scrcpy/issues/4467>
             mustFillConfigurationController = true;
+            // app_process 不经过常规 zygote framework 初始化。Android 12+ 的
+            // MediaSessionManager 构造时依赖这个单例，未补齐会直接空指针。
+            fillMediaServiceManager();
         }
 
         if (mustFillConfigurationController) {
@@ -173,6 +176,40 @@ public final class Workarounds {
             configurationControllerField.set(ACTIVITY_THREAD, configurationController);
         } catch (Throwable throwable) {
             L.d("Could not fill configuration: " + throwable.getMessage());
+        }
+    }
+
+    private static void fillMediaServiceManager() {
+        try {
+            Class<?> mediaServiceManagerClass = Class.forName("android.media.MediaServiceManager");
+            Constructor<?> constructor = mediaServiceManagerClass.getDeclaredConstructor();
+            constructor.setAccessible(true);
+
+            // MEDIA_SESSION_SERVICE 目前仍由 platform initializer 注册；部分厂商版本
+            // 也可能走 mainline initializer，因此依次尝试。
+            String[] initializerNames = new String[]{
+                    "android.media.MediaFrameworkPlatformInitializer",
+                    "android.media.MediaFrameworkInitializer"
+            };
+            for (String initializerName : initializerNames) {
+                try {
+                    Class<?> initializerClass = Class.forName(initializerName);
+                    Method getMethod = initializerClass.getDeclaredMethod("getMediaServiceManager");
+                    getMethod.setAccessible(true);
+                    if (getMethod.invoke(null) != null) return;
+
+                    Method setMethod = initializerClass.getDeclaredMethod(
+                            "setMediaServiceManager", mediaServiceManagerClass);
+                    setMethod.setAccessible(true);
+                    setMethod.invoke(null, constructor.newInstance());
+                    L.d("Filled MediaServiceManager through " + initializerName);
+                    return;
+                } catch (ClassNotFoundException | NoSuchMethodException ignored) {
+                    // 尝试另一个 framework 版本。
+                }
+            }
+        } catch (Throwable throwable) {
+            L.d("Could not fill media service manager: " + throwable.getMessage());
         }
     }
 

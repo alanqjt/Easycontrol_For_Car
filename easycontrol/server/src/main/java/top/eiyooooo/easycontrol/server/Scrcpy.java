@@ -50,6 +50,7 @@ public final class Scrcpy {
                     + ", socketName=" + Options.socketName
                     + ", mirrorMode=" + Options.mirrorMode
                     + ", audio=" + Options.isAudio
+                    + ", video=" + Options.isVideo
                     + ", audioProtocol=" + Options.audioProtocol
                     + ", audioSplit=" + Options.audioSplit);
 
@@ -82,13 +83,23 @@ public final class Scrcpy {
             // 初始化音频和视频编码子服务。
             AudioEncode.init();
             L.i("scrcpy stage=audio-ready");
-            VideoEncode.init();
-            L.i("scrcpy stage=video-ready");
+            if (Options.isVideo) {
+                VideoEncode.init();
+                L.i("scrcpy stage=video-ready");
+            } else {
+                L.i("scrcpy stage=video-disabled");
+            }
             // 启动数据流线程。
             ArrayList<Thread> threads = new ArrayList<>();
-            threads.add(new Thread(Scrcpy::executeVideoOut));
-            threads.add(new Thread(Scrcpy::executeControlIn));
+            if (Options.isVideo) {
+                threads.add(new Thread(Scrcpy::executeVideoOut, "easycontrol_video_out"));
+            } else {
+                threads.add(new Thread(Scrcpy::executeConnectionWatchdog,
+                        "easycontrol_connection_watchdog"));
+            }
+            threads.add(new Thread(Scrcpy::executeControlIn, "easycontrol_control_in"));
             for (Thread thread : threads) thread.setPriority(Thread.MAX_PRIORITY);
+            lastKeepAliveTime = System.currentTimeMillis();
             for (Thread thread : threads) thread.start();
             L.i("scrcpy stage=streaming");
             if (Options.TurnOnScreenIfStart) {
@@ -139,10 +150,12 @@ public final class Scrcpy {
         try (LocalServerSocket serverSocket = new LocalServerSocket(Options.socketName)) {
             L.i("scrcpy stage=main-socket-accept, socketName=" + Options.socketName);
             mainSocket = serverSocket.accept();
-            L.i("scrcpy stage=video-socket-accept, socketName=" + Options.socketName);
-            videoSocket = serverSocket.accept();
             mainFD = mainSocket.getFileDescriptor();
-            videoFD = videoSocket.getFileDescriptor();
+            if (Options.isVideo) {
+                L.i("scrcpy stage=video-socket-accept, socketName=" + Options.socketName);
+                videoSocket = serverSocket.accept();
+                videoFD = videoSocket.getFileDescriptor();
+            }
             inputStream = new DataInputStream(mainSocket.getInputStream());
         }
     }
@@ -174,6 +187,22 @@ public final class Scrcpy {
     }
 
     private static long lastKeepAliveTime = System.currentTimeMillis();
+
+    private static void executeConnectionWatchdog() {
+        try {
+            while (!Thread.currentThread().isInterrupted()) {
+                Thread.sleep(1000L);
+                if (System.currentTimeMillis() - lastKeepAliveTime > timeoutDelay) {
+                    timeoutClose = true;
+                    throw new IOException("Connection disconnected");
+                }
+            }
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (IOException e) {
+            errorClose(e);
+        }
+    }
 
     private static void executeControlIn() {
         try {
@@ -274,10 +303,12 @@ public final class Scrcpy {
         closeQuietly(videoSocket, "video socket");
 
         // 2. 释放音视频编码器。
-        try {
-            VideoEncode.release();
-        } catch (Throwable e) {
-            L.e("release video error", e);
+        if (Options.isVideo) {
+            try {
+                VideoEncode.release();
+            } catch (Throwable e) {
+                L.e("release video error", e);
+            }
         }
         try {
             AudioEncode.release();

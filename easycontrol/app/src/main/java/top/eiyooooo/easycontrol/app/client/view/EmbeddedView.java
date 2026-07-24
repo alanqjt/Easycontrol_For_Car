@@ -24,6 +24,7 @@ public final class EmbeddedView {
 
   private final ClientView clientView;
   private final ViewEmbeddedProjectionBinding binding;
+  private final MusicCardController musicCardController;
   private boolean ready;
   private boolean toolbarVisible = false;
   private int lastHostWidth;
@@ -33,6 +34,9 @@ public final class EmbeddedView {
   public EmbeddedView(ClientView clientView) {
     this.clientView = clientView;
     binding = ViewEmbeddedProjectionBinding.inflate(LayoutInflater.from(AppData.main));
+    musicCardController = clientView.device.embeddedMusicCard
+            && clientView.device.embeddedSlot == top.eiyooooo.easycontrol.app.entity.Device.EMBEDDED_SLOT_RIGHT
+            ? new MusicCardController(clientView, binding.textureViewLayout) : null;
     setButtonListeners();
     setKeyListener();
     setNavBarVisible(false);
@@ -45,6 +49,7 @@ public final class EmbeddedView {
 
   public void showLoading() {
     ready = false;
+    if (musicCardController != null) musicCardController.stop();
     binding.loadingGroup.setVisibility(View.VISIBLE);
     binding.buttonToolbarToggle.setVisibility(View.GONE);
     binding.toolbarContainer.setVisibility(View.GONE);
@@ -65,6 +70,7 @@ public final class EmbeddedView {
     updateToolbarVisibility();
     setNavBarVisible(false);
     attachTextureView();
+    if (musicCardController != null) musicCardController.start();
     binding.editText.requestFocus();
     binding.getRoot().post(this::updateMaxSize);
     Log.i(TAG, "embedded projection shown uuid=" + clientView.device.uuid
@@ -79,6 +85,7 @@ public final class EmbeddedView {
 
   public void hide() {
     ready = false;
+    if (musicCardController != null) musicCardController.stop();
     try {
       ViewParentTools.removeFromParent(clientView.textureView);
       MainActivity.detachEmbeddedProjection(binding.getRoot());
@@ -139,6 +146,7 @@ public final class EmbeddedView {
     binding.buttonNavBar.setOnClickListener(v -> setNavBarVisible(binding.navBar.getVisibility() == View.GONE));
     binding.buttonClose.setOnClickListener(v -> clientView.onClose.run());
     binding.buttonTransfer.setOnClickListener(v -> clientView.changeMode.run(clientView.mode == 0 ? 1 : 0));
+    if (musicCardController != null) binding.buttonTransfer.setVisibility(View.GONE);
     if (!clientView.lightState) binding.buttonLightOff.setImageResource(R.drawable.lightbulb);
     binding.buttonLightOff.setOnClickListener(v -> {
       if (clientView.lightState) {

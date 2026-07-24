@@ -553,6 +553,9 @@ public class Adb {
       case "getAppDetail":
       case "getAppAudioInfo":
       case "getAppMainActivity":
+      case "getMediaInfo":
+      case "getLyrics":
+      case "getMediaQueue":
       case "getNightMode":
         return true;
       default:

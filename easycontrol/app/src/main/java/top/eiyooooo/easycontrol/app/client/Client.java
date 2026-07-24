@@ -71,6 +71,11 @@ public class Client {
   private static final int AUDIO_OWNER_PRIORITY_UID_FLOW = 300;
   private static final long AUDIO_OWNER_AUDIBLE_GRACE_MS = 1_500L;
   private static final long AUDIO_OWNER_REEVALUATE_INTERVAL_MS = 250L;
+  private static final float MEDIA_DUCK_VOLUME = 0.28f;
+  private static final long MEDIA_DUCK_RELEASE_DELAY_MS = 1_200L;
+  private static long lastNavigationAudibleMs;
+  private static boolean mediaDucked;
+  private static final Runnable mediaDuckReleaseRunnable = Client::releaseMediaDuckIfIdle;
 
   // 连接相关对象。
   public Adb adb;
@@ -109,6 +114,8 @@ public class Client {
   private final String serverSocketName = "easycontrol_for_car_scrcpy_"
           + sessionId.substring(0, 8);
   public final boolean embeddedMode;
+  // 大字体音乐卡片只需要手机音频、媒体信息和控制，不传输被卡片遮住的视频。
+  private final boolean videoEnabled;
   private final boolean usbTransport;
   private final boolean honorUsbTransport;
   private volatile String honorWifiAddress;
@@ -196,11 +203,15 @@ public class Client {
       navigationDevice.temporarySession = true;
       musicDevice.temporarySession = true;
       navigationClient = new Client(navigationDevice, usbDevice, 1, true);
-      new Client(musicDevice, usbDevice, 1, true);
+      // 大字体卡片不需要虚拟显示：保留手机现有音乐任务，只按包 UID 采集音频。
+      int musicMode = musicDevice.embeddedMusicCard ? 0 : 1;
+      new Client(musicDevice, usbDevice, musicMode, true);
       Log.i("EasycontrolEmbedded", "embedded music-navigation pair accepted"
               + ", uuid=" + navigationDevice.uuid
               + ", navigation=" + navigationDevice.specified_app
-              + ", music=" + musicDevice.specified_app);
+              + ", music=" + musicDevice.specified_app
+              + ", musicMode=" + (musicDevice.embeddedMusicCard
+              ? "card-audio-only" : "phone-screen-flow"));
       return true;
     } catch (RuntimeException e) {
       Log.e("EasycontrolEmbedded", "embedded music-navigation pair start failed", e);
@@ -218,6 +229,7 @@ public class Client {
     // 初始化设备标识，后续多连接判断要优先使用它。
     uuid = device.uuid;
     this.embeddedMode = embeddedMode;
+    videoEnabled = !device.embeddedMusicCard;
     usbTransport = usbDevice != null;
     honorUsbTransport = usbDevice != null && usbDevice.getVendorId() == HONOR_USB_VENDOR_ID;
     // 如果指定了转移模式，就先标记为已转移。
@@ -241,7 +253,7 @@ public class Client {
         if (releaseStarted.get() || status != 0) return;
         status = 1;
         executeStreamInThread.start();
-        executeStreamVideoThread.start();
+        if (videoEnabled) executeStreamVideoThread.start();
       }
       AppData.uiHandler.post(this::executeOtherService);
     }, () -> release(null), embeddedMode, this::onEmbeddedHostSizeChanged);
@@ -405,23 +417,26 @@ public class Client {
     cmd.append(" socketName=").append(serverSocketName);
     // 荣耀 USB gadget 在部分 Android 11 车机 Host 上无法稳定承载双路音频和视频的
     // 并发 ADB WRTE/OKAY。优先保证镜像画面；WiFi 连接仍保留完整音频能力。
-    boolean startAudio = shouldStartServerAudio(device) && !honorUsbTransport;
+    boolean startAudio = shouldStartServerAudio(device)
+            && (!honorUsbTransport || !videoEnabled);
     Log.i(AUDIO_LOG_TAG, "audio start decision " + audioClientDescription()
             + ", deviceAudio=" + device.isAudio
-            + ", honorUsbVideoOnly=" + honorUsbTransport
+            + ", videoEnabled=" + videoEnabled
+            + ", honorUsbVideoOnly=" + (honorUsbTransport && videoEnabled)
             + ", enabled=" + startAudio);
     if (!startAudio) cmd.append(" isAudio=0");
     else {
       // v2 音频帧携带角色；直接投屏可在同一个 socket 内交错传输导航和媒体帧。
       cmd.append(" audioProtocol=2");
       cmd.append(" audioRole=").append(audioRole);
-      if (mode == 0) cmd.append(" audioSplit=1");
+      if (mode == 0 && !device.embeddedMusicCard) cmd.append(" audioSplit=1");
       if (uidFilteredAudio) {
         cmd.append(" audioUid=").append(flowUid);
         // 只有第一路连接可回退整机混音，防止厂商不支持 UID AudioPolicy 时出现多路重复声音。
         cmd.append(" audioFallback=").append(multiLink == 2 ? 0 : 1);
       }
     }
+    if (!videoEnabled) cmd.append(" isVideo=0");
     // 荣耀 USB gadget 在这类 Android 11 Host 上对大 ADB WRTE 帧很敏感。首帧使用
     // H.265 时会在视频握手之后卡住，连心跳也无法继续传输。仅对荣耀 USB 会话使用
     // 更小的 H.264 传输档位，WiFi 和其他品牌仍完全遵循设备画质设置。
@@ -448,6 +463,7 @@ public class Client {
             + ", targetFps=" + serverMaxFps
             + ", targetMbps=" + serverMaxVideoBit
             + ", codec=" + (serverUseH265 ? "H265" : "H264")
+            + ", enabled=" + videoEnabled
             + ", honorUsbSafeProfile=" + honorUsbTransport);
     // 直接把完整命令交给 ADB shell service。荣耀的交互 shell 会回显命令，却可能不执行
     // app_process，最终等到 socket 超时；非交互启动也与标准 adb/scrcpy 路径一致。
@@ -461,7 +477,7 @@ public class Client {
     flowCategory = ApplicationInfo.CATEGORY_UNDEFINED;
     audioRole = AudioDecode.ROLE_MEDIA;
     uidFilteredAudio = false;
-    if (!device.isAudio || mode != 1) return;
+    if (!device.isAudio || (mode != 1 && !device.embeddedMusicCard)) return;
 
     try {
       String packageName = device.specified_app == null ? "" : device.specified_app.trim();
@@ -476,7 +492,10 @@ public class Client {
       flowPackageName = packageName;
       flowUid = appInfo.optInt("uid", -1);
       flowCategory = appInfo.optInt("category", ApplicationInfo.CATEGORY_UNDEFINED);
-      audioRole = isNavigationApp(flowPackageName, flowCategory) ? AudioDecode.ROLE_NAVIGATION : AudioDecode.ROLE_MEDIA;
+      audioRole = device.embeddedMusicCard
+              ? AudioDecode.ROLE_MEDIA
+              : isNavigationApp(flowPackageName, flowCategory)
+              ? AudioDecode.ROLE_NAVIGATION : AudioDecode.ROLE_MEDIA;
       uidFilteredAudio = flowUid > 0 && !flowPackageName.isEmpty();
       L.log(uuid, "flow audio target package=" + flowPackageName
               + ", uid=" + flowUid
@@ -1075,7 +1094,8 @@ public class Client {
     Thread.sleep(50);
     Adb pendingVideoAdb = null;
     try {
-      String videoAddress = !usbTransport ? clientView.device.address : honorWifiAddress;
+      String videoAddress = videoEnabled
+              ? (!usbTransport ? clientView.device.address : honorWifiAddress) : null;
       if (videoAddress != null && !videoAddress.isEmpty()) {
         try {
           pendingVideoAdb = Adb.createAuxiliaryTcp(
@@ -1098,8 +1118,10 @@ public class Client {
         BufferStream pendingVideoStream = null;
         try {
           controlStream = adb.localSocketForward(serverSocketName);
-          pendingVideoStream = (pendingVideoAdb == null ? adb : pendingVideoAdb)
-                  .localSocketForward(serverSocketName);
+          if (videoEnabled) {
+            pendingVideoStream = (pendingVideoAdb == null ? adb : pendingVideoAdb)
+                    .localSocketForward(serverSocketName);
+          }
           synchronized (lifecycleLock) {
             if (releaseStarted.get()) {
               throw new InterruptedException("client released while connecting");
@@ -1112,7 +1134,8 @@ public class Client {
           pendingVideoAdb = null;
           L.log(uuid, "scrcpy sockets connected, attempt=" + (i + 1)
                   + ", socketName=" + serverSocketName
-                  + ", transport=" + (usbTransport ? "USB shared" : "WiFi split"));
+                  + ", transport=" + (!videoEnabled ? "audio-only"
+                  : usbTransport ? "USB shared" : "WiFi split"));
           return;
         } catch (Exception ignored) {
           if (controlStream != null) controlStream.close();
@@ -1460,6 +1483,11 @@ public class Client {
 
   public void changeMode(int mode) {
     if (isClosed()) return;
+    if (clientView != null && clientView.device.embeddedMusicCard && mode != 0) {
+      Log.i(DISPLAY_LOG_TAG, "music card ignored application-transfer request"
+              + ", uuid=" + uuid + ", requestedMode=" + mode);
+      return;
+    }
     if (this.mode == mode) return;
     this.mode = mode;
     if (mode == 0) {
@@ -1574,18 +1602,27 @@ public class Client {
     synchronized (audioOwnerLock) {
       long now = SystemClock.elapsedRealtime();
       lastAudibleAudioMs[role] = now;
+      if (role == AudioDecode.ROLE_NAVIGATION && audioOwners[role] == this) {
+        noteNavigationAudioForDuckLocked(now);
+      }
       if (audioOwners[role] == this
               || now - lastAudioOwnerReevaluateMs[role] < AUDIO_OWNER_REEVALUATE_INTERVAL_MS) {
         return;
       }
       lastAudioOwnerReevaluateMs[role] = now;
       requestAudioOwnerLocked(role, true);
+      if (role == AudioDecode.ROLE_NAVIGATION && audioOwners[role] == this) {
+        noteNavigationAudioForDuckLocked(now);
+      }
     }
   }
 
   private void requestAudioOwnerLocked(int role, boolean audibleRequest) {
     AudioDecode decoder = audioDecodes[role];
     if (decoder == null) return;
+    if (role == AudioDecode.ROLE_MEDIA) {
+      decoder.setPlaybackVolume(mediaDucked ? MEDIA_DUCK_VOLUME : 1f);
+    }
     int requestedPriority = audioOwnerPriority(role);
     if (requestedPriority == AUDIO_OWNER_PRIORITY_NONE) {
       decoder.playAudio(false);
@@ -1633,6 +1670,38 @@ public class Client {
             + ", request=" + (audibleRequest ? "audible" : "pipeline")
             + ", oldAudibleAgeMs=" + (oldAudibleAgeMs == Long.MAX_VALUE
                     ? "never" : oldAudibleAgeMs));
+  }
+
+  private static void noteNavigationAudioForDuckLocked(long now) {
+    lastNavigationAudibleMs = now;
+    AppData.uiHandler.removeCallbacks(mediaDuckReleaseRunnable);
+    AppData.uiHandler.postDelayed(mediaDuckReleaseRunnable, MEDIA_DUCK_RELEASE_DELAY_MS);
+    if (mediaDucked) return;
+    mediaDucked = true;
+    setAllMediaDecoderVolumesLocked(MEDIA_DUCK_VOLUME);
+    Log.i(AUDIO_LOG_TAG, "media duck started volume=" + MEDIA_DUCK_VOLUME);
+  }
+
+  private static void releaseMediaDuckIfIdle() {
+    synchronized (audioOwnerLock) {
+      long idleMs = SystemClock.elapsedRealtime() - lastNavigationAudibleMs;
+      if (idleMs < MEDIA_DUCK_RELEASE_DELAY_MS) {
+        AppData.uiHandler.postDelayed(
+                mediaDuckReleaseRunnable, MEDIA_DUCK_RELEASE_DELAY_MS - idleMs);
+        return;
+      }
+      if (!mediaDucked) return;
+      mediaDucked = false;
+      setAllMediaDecoderVolumesLocked(1f);
+      Log.i(AUDIO_LOG_TAG, "media duck released idleMs=" + idleMs);
+    }
+  }
+
+  private static void setAllMediaDecoderVolumesLocked(float volume) {
+    for (Client client : allClient) {
+      AudioDecode mediaDecoder = client.audioDecodes[AudioDecode.ROLE_MEDIA];
+      if (mediaDecoder != null) mediaDecoder.setPlaybackVolume(volume);
+    }
   }
 
   private void releaseAudioOwner() {

@@ -40,6 +40,7 @@ public class DeviceListAdapter {
   private static final String MUSIC_NAVIGATION_PREFS = "music_navigation_apps";
   private static final String KEY_NAVIGATION_PACKAGE = "navigation_package_";
   private static final String KEY_MUSIC_PACKAGE = "music_package_";
+  private static final String KEY_MUSIC_CARD = "music_card_";
   private static final String DEFAULT_NAVIGATION_PACKAGE = "com.autonavi.minimap";
   private static final String DEFAULT_MUSIC_PACKAGE = "com.tencent.qqmusic";
 
@@ -252,6 +253,9 @@ public class DeviceListAdapter {
     binding.musicAppPackage.setText(musicPackage);
     binding.navigationAppName.setText(getAppLabel(navigationPackage));
     binding.musicAppName.setText(getAppLabel(musicPackage));
+    boolean musicCard = preferences.getBoolean(KEY_MUSIC_CARD + device.uuid, false);
+    binding.displayModeLargeCard.setChecked(musicCard);
+    binding.displayModePhone.setChecked(!musicCard);
 
     Dialog dialog = PublicTools.createDialog(context, true, binding.getRoot(), 760);
     binding.buttonCancel.setOnClickListener(v -> dialog.cancel());
@@ -276,11 +280,13 @@ public class DeviceListAdapter {
               device, selectedNavigation, Device.EMBEDDED_SLOT_LEFT);
       Device musicDevice = createTemporaryFlowDevice(
               device, selectedMusic, Device.EMBEDDED_SLOT_RIGHT);
+      musicDevice.embeddedMusicCard = binding.displayModeLargeCard.isChecked();
       if (!Client.startEmbeddedPair(navigationDevice, musicDevice, usbDevice)) return;
 
       preferences.edit()
               .putString(KEY_NAVIGATION_PACKAGE + device.uuid, selectedNavigation)
               .putString(KEY_MUSIC_PACKAGE + device.uuid, selectedMusic)
+              .putBoolean(KEY_MUSIC_CARD + device.uuid, musicDevice.embeddedMusicCard)
               .apply();
       dialog.cancel();
     });

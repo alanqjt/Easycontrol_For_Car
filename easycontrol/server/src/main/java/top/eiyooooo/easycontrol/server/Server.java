@@ -6,6 +6,7 @@ import android.view.Display;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import top.eiyooooo.easycontrol.server.entity.DisplayInfo;
+import top.eiyooooo.easycontrol.server.helper.MediaSessionHelper;
 import top.eiyooooo.easycontrol.server.utils.L;
 import top.eiyooooo.easycontrol.server.utils.Workarounds;
 import top.eiyooooo.easycontrol.server.wrappers.DisplayManager;
@@ -188,6 +189,49 @@ public class Server {
                     String packageName = request.get("package");
                     if (packageName == null) throw new Exception("parameter 'package' not found");
                     postResponse(channel.getAppMainActivity(packageName));
+                    break;
+                }
+                case "/getMediaInfo": {
+                    String packageName = request.get("package");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    boolean artwork = "1".equals(request.get("artwork"));
+                    postResponse(MediaSessionHelper.getMediaInfo(packageName, artwork).toString());
+                    break;
+                }
+                case "/getLyrics": {
+                    String packageName = request.get("package");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    postResponse(MediaSessionHelper.getLyrics(packageName).toString());
+                    break;
+                }
+                case "/getMediaQueue": {
+                    String packageName = request.get("package");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    postResponse(MediaSessionHelper.getMediaQueue(packageName).toString());
+                    break;
+                }
+                case "/setPlaybackMode": {
+                    String packageName = request.get("package");
+                    String mode = request.get("mode");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    if (mode == null) throw new Exception("parameter 'mode' not found");
+                    postResponse(MediaSessionHelper.setPlaybackMode(packageName, mode).toString());
+                    break;
+                }
+                case "/controlMedia": {
+                    String packageName = request.get("package");
+                    String action = request.get("action");
+                    if (packageName == null) throw new Exception("parameter 'package' not found");
+                    if (action == null) throw new Exception("parameter 'action' not found");
+                    if ("queue_item".equals(action)) {
+                        String queueId = request.get("queueId");
+                        if (queueId == null) throw new Exception("parameter 'queueId' not found");
+                        postResponse(MediaSessionHelper.playQueueItem(
+                                packageName, Long.parseLong(queueId)).toString());
+                    } else {
+                        postResponse(MediaSessionHelper.controlMedia(
+                                packageName, action).toString());
+                    }
                     break;
                 }
                 case "/createVirtualDisplay": {

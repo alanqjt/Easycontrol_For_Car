@@ -287,6 +287,34 @@
   <string name="music_navigation_device_unavailable">设备当前不可连接</string>
   <string name="music_navigation_default_navigation">高德地图</string>
   <string name="music_navigation_default_music">QQ音乐</string>
+  <string name="music_navigation_display_mode">右侧音乐显示</string>
+  <string name="music_navigation_phone_screen">手机音乐画面</string>
+  <string name="music_navigation_large_card">大字体音乐卡片</string>
+  <string name="music_navigation_large_card_detail">手机端启动音乐；车机只接收音频与媒体信息并显示卡片，不启动本地音乐应用</string>
+  <string name="music_card_header">手机音乐</string>
+  <string name="music_card_waiting_title">等待手机音乐</string>
+  <string name="music_card_waiting_detail">请先在手机音乐应用中播放歌曲</string>
+  <string name="music_card_connection_error">暂时无法读取歌曲信息</string>
+  <string name="music_card_previous">上一首</string>
+  <string name="music_card_play">播放</string>
+  <string name="music_card_pause">暂停</string>
+  <string name="music_card_next">下一首</string>
+  <string name="music_card_album_unknown">手机音乐正在播放</string>
+  <string name="music_card_lyrics_waiting">正在读取歌词…</string>
+  <string name="music_card_lyrics_unavailable">暂无歌词</string>
+  <string name="music_card_playback_mode">播放模式</string>
+  <string name="music_card_mode_random">随机播放</string>
+  <string name="music_card_mode_order">顺序播放</string>
+  <string name="music_card_mode_single">单曲循环</string>
+  <string name="music_card_mode_failed">手机音乐应用未响应播放模式切换</string>
+  <string name="music_card_queue">播放队列</string>
+  <string name="music_card_queue_count">播放队列 · %1$d首</string>
+  <string name="music_card_queue_loading">正在读取手机播放队列…</string>
+  <string name="music_card_queue_unavailable">QQ音乐未向系统开放播放队列</string>
+  <string name="music_card_queue_failed">播放队列读取失败</string>
+  <string name="music_card_queue_empty">播放队列为空</string>
+  <string name="music_card_queue_unknown">未知歌曲</string>
+  <string name="music_card_close">关闭</string>
 
   <!-- 内嵌投屏 -->
   <string name="embedded_projection_connecting">正在连接设备</string>

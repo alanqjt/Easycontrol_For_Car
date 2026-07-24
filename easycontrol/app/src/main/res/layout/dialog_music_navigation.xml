@@ -140,6 +140,62 @@
   <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_marginTop="12dp"
+    android:background="@drawable/setting_group_background"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:fontFamily="sans-serif-medium"
+      android:text="@string/music_navigation_display_mode"
+      android:textColor="@color/onCardBackground"
+      android:textSize="@dimen/smallFont" />
+
+    <RadioGroup
+      android:id="@+id/music_display_mode"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="10dp"
+      android:orientation="horizontal">
+
+      <RadioButton
+        android:id="@+id/display_mode_phone"
+        android:layout_width="0dp"
+        android:layout_height="52dp"
+        android:layout_weight="1"
+        android:buttonTint="@color/button"
+        android:checked="true"
+        android:gravity="center_vertical"
+        android:text="@string/music_navigation_phone_screen"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/smallFont" />
+
+      <RadioButton
+        android:id="@+id/display_mode_large_card"
+        android:layout_width="0dp"
+        android:layout_height="52dp"
+        android:layout_weight="1"
+        android:buttonTint="@color/button"
+        android:gravity="center_vertical"
+        android:text="@string/music_navigation_large_card"
+        android:textColor="@color/onCardBackground"
+        android:textSize="@dimen/smallFont" />
+    </RadioGroup>
+
+    <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
+      android:text="@string/music_navigation_large_card_detail"
+      android:textColor="@color/onCardBackgroundSecond"
+      android:textSize="@dimen/smallSmallFont" />
+  </LinearLayout>
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
     android:layout_marginTop="20dp"
     android:orientation="horizontal">
 

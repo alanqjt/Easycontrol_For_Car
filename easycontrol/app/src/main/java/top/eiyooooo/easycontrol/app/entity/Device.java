@@ -53,6 +53,8 @@ public class Device {
   // 仅用于当前投屏会话，不写入数据库。
   public int embeddedSlot = EMBEDDED_SLOT_FULL;
   public boolean temporarySession;
+  // true 时手机端启动音乐应用，车机只接收音频/媒体信息并显示本地大字卡片。
+  public boolean embeddedMusicCard;
 
   public Device(String uuid,
                 int type,
@@ -159,6 +161,7 @@ public class Device {
     target.connection = source.connection;
     target.embeddedSlot = source.embeddedSlot;
     target.temporarySession = source.temporarySession;
+    target.embeddedMusicCard = source.embeddedMusicCard;
   }
 
   public static Device getDefaultDevice(String uuid, int type) {
